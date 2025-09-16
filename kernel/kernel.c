@@ -6,17 +6,25 @@ typedef unsigned short u16;
 typedef unsigned char u8;
 
 #define NULL ((void*)0)
-#define MAX_NAME 256      // Макс длина имени файла или директории
-#define MAX_PATH 1024     // Макс длина полного пути
-#define SECTOR_SIZE 512   // Размер 1 сектора 
+#define MAX_NAME 256
+#define MAX_PATH 1024
+#define SECTOR_SIZE 512
 #define FS_SECTOR_START 1
 #define MAX_FILES 64
 #define MAX_HISTORY 10
 
+typedef struct { 
+    char name[MAX_PATH];
+    int is_dir; 
+    char content[256]; 
+    u32 next_sector;
+    u32 size;
+} FSNode;
+
 /* Function prototypes */
 void itoa(int value, char* str, int base);
 void coreview_command(void);
-void putchar(char ch); 
+void putchar(char ch);
 void memcpy(void* dst, void* src, int len);
 int strcmp(const char* a, const char* b);
 int strlen(const char* s);
@@ -32,6 +40,19 @@ void ata_write_sector(u32 lba, u8* buffer);
 void ata_wait_ready();
 void ata_wait_drq();
 void memory_command(void);
+void clear_screen();
+void fs_load_from_disk();
+void fs_save_to_disk();
+void fs_mark_dirty();
+void fs_init();
+void fs_ls();
+void fs_mkdir(const char* name);
+void fs_touch(const char* name);
+void fs_rm(const char* name);
+void fs_cd(const char* name);
+FSNode* fs_find_file(const char* name);
+void fs_copy(const char* src_name, const char* dest_name);
+void fs_size(const char* name);
 
 /* Multiboot header */
 typedef struct {
@@ -80,17 +101,9 @@ static inline void outw(unsigned short port, u16 val) {
 #define ATA_STATUS 0x1F7
 #define ATA_CMD 0x1F7
 
-typedef struct { 
-    char name[MAX_PATH]; // MAX_PATH
-    int is_dir; 
-    char content[256]; 
-    u32 next_sector;
-    u32 size; /* File size in bytes */
-} FSNode;
-
 FSNode fs_cache[MAX_FILES];
 int fs_count = 0;
-char current_dir[MAX_PATH] = "/"; //  MAX_PATH
+char current_dir[MAX_PATH] = "/";
 int fs_dirty = 0;
 
 /* Command history */
@@ -159,7 +172,7 @@ void fs_load_from_disk() {
     fs_dirty = 0;
 
     while (sector != 0 && fs_count < MAX_FILES) {
-        u8 temp_buffer[1536]; // 3 сектора по 512 байт
+        u8 temp_buffer[1536];
         for (int i = 0; i < 3; i++) {
             ata_read_sector(sector + i, sector_buffer);
             memcpy(temp_buffer + i * SECTOR_SIZE, sector_buffer, SECTOR_SIZE);
@@ -177,6 +190,7 @@ void fs_load_from_disk() {
         fs_cache[0].size = 0;
         fs_count = 1;
         fs_dirty = 1;
+        fs_save_to_disk();
     }
 }
 
@@ -187,7 +201,7 @@ void fs_save_to_disk() {
     u32 sector = FS_SECTOR_START;
 
     for (int i = 0; i < fs_count; i++) {
-        u8 temp_buffer[1536]; // 3 сектора по 512 байт
+        u8 temp_buffer[1536];
         memcpy(temp_buffer, &fs_cache[i], sizeof(FSNode));
         for (int j = 0; j < 3; j++) {
             memcpy(sector_buffer, temp_buffer + j * SECTOR_SIZE, SECTOR_SIZE);
@@ -265,7 +279,6 @@ void fs_mkdir(const char* name) {
         strcat(full_path, name);
     }
 
-    // Проверка на существование
     for (int i = 0; i < fs_count; i++) {
         if (strcmp(fs_cache[i].name, full_path) == 0) {
             prints("Error: Name already exists: ");
@@ -282,6 +295,7 @@ void fs_mkdir(const char* name) {
     fs_cache[fs_count].size = 0;
     fs_count++;
     fs_mark_dirty();
+    fs_save_to_disk();
     prints("Directory '");
     prints(name);
     prints("' created\n");
@@ -313,7 +327,6 @@ void fs_touch(const char* name) {
         strcat(full_path, name);
     }
 
-    // Проверка на существование
     for (int i = 0; i < fs_count; i++) {
         if (strcmp(fs_cache[i].name, full_path) == 0) {
             prints("Error: Name already exists: ");
@@ -330,6 +343,7 @@ void fs_touch(const char* name) {
     fs_cache[fs_count].size = 0;
     fs_count++;
     fs_mark_dirty();
+    fs_save_to_disk();
     prints("File '");
     prints(name);
     prints("' created\n");
@@ -356,7 +370,6 @@ void fs_rm(const char* name) {
         strcat(full_path, name);
     }
 
-    // Проверяем, существует ли файл или директория
     int found = -1;
     for (int i = 0; i < fs_count; i++) {
         if (strcmp(fs_cache[i].name, full_path) == 0) {
@@ -372,7 +385,6 @@ void fs_rm(const char* name) {
         return;
     }
 
-    // Если это директория, удаляем все её содержимое
     if (fs_cache[found].is_dir) {
         char dir_path[MAX_PATH];
         strcpy(dir_path, full_path);
@@ -384,7 +396,6 @@ void fs_rm(const char* name) {
             strcat(dir_path, "/");
         }
 
-        // Удаляем все файлы и поддиректории
         for (int i = fs_count - 1; i >= 0; i--) {
             if (i != found && strstr(fs_cache[i].name, dir_path) == fs_cache[i].name) {
                 for (int j = i; j < fs_count - 1; j++) {
@@ -395,12 +406,12 @@ void fs_rm(const char* name) {
         }
     }
 
-    // Удаляем сам файл или директорию
     for (int i = found; i < fs_count - 1; i++) {
         fs_cache[i] = fs_cache[i + 1];
     }
     fs_count--;
     fs_mark_dirty();
+    fs_save_to_disk();
 
     prints("'");
     prints(name);
@@ -558,6 +569,7 @@ void fs_copy(const char* src_name, const char* dest_name) {
     fs_cache[fs_count].size = src->size;
     fs_count++;
     fs_mark_dirty();
+    fs_save_to_disk();
     prints("File copied to '");
     prints(dest_name);
     prints("'\n");
@@ -1348,10 +1360,13 @@ void writer_command(const char* filename) {
     int cursor_pos = content_len;
     
     unsigned char old_color = text_color;
+    int exit_editor = 0;
+    int save_file = 0;
     
     text_color = 0x70;
     clear_screen();
     
+    // Верхняя строка с названием файла
     for (int c = 0; c < COLS; c++) {
         VGA[0 * COLS + c] = (unsigned short)(' ' | (text_color << 8));
     }
@@ -1361,11 +1376,13 @@ void writer_command(const char* filename) {
     prints(filename);
     prints(" - Writer");
     
+    // Нижняя строка с подсказками
     text_color = 0x70;
     cursor_row = ROWS - 1;
     cursor_col = 5;
     prints("F9: Save  ESC: Exit");
     
+    // Основная область редактирования
     text_color = 0x1F;
     for (int r = 1; r < ROWS - 1; r++) {
         for (int c = 0; c < COLS; c++) {
@@ -1373,13 +1390,19 @@ void writer_command(const char* filename) {
         }
     }
     
+    // Отображаем начальное содержимое
     cursor_row = 2;
     cursor_col = 2;
-    prints(content);
+    for (int i = 0; i < content_len; i++) {
+        if (content[i] == '\n') {
+            cursor_row++;
+            cursor_col = 2;
+        } else {
+            putchar(content[i]);
+        }
+    }
     
-    int exit_editor = 0;
-    int save_file = 0;
-    
+    // Основной цикл редактора
     while (!exit_editor) {
         cursor_row = 2 + (cursor_pos / (COLS - 4));
         cursor_col = 2 + (cursor_pos % (COLS - 4));
@@ -1387,11 +1410,11 @@ void writer_command(const char* filename) {
         char c = keyboard_getchar();
         
         switch (c) {
-            case 27:
+            case 27: // ESC
                 exit_editor = 1;
                 break;
                 
-            case '\n':
+            case '\n': // Enter
                 if (content_len < 255) {
                     for (int i = content_len; i > cursor_pos; i--) {
                         content[i] = content[i-1];
@@ -1399,7 +1422,9 @@ void writer_command(const char* filename) {
                     content[cursor_pos] = '\n';
                     content_len++;
                     cursor_pos++;
+                    content[content_len] = '\0';
                     
+                    // Перерисовываем содержимое
                     text_color = 0x1F;
                     for (int r = 1; r < ROWS - 1; r++) {
                         for (int c = 0; c < COLS; c++) {
@@ -1419,14 +1444,16 @@ void writer_command(const char* filename) {
                 }
                 break;
                 
-            case '\b':
-                if (cursor_pos > 0) {
+            case '\b': // Backspace
+                if (cursor_pos > 0 && content_len > 0) {
                     for (int i = cursor_pos - 1; i < content_len; i++) {
                         content[i] = content[i+1];
                     }
                     content_len--;
                     cursor_pos--;
+                    content[content_len] = '\0';
                     
+                    // Перерисовываем содержимое
                     text_color = 0x1F;
                     for (int r = 1; r < ROWS - 1; r++) {
                         for (int c = 0; c < COLS; c++) {
@@ -1446,12 +1473,12 @@ void writer_command(const char* filename) {
                 }
                 break;
                 
-            case '\xF9':
+            case '\xF9': // F9 - Save
                 save_file = 1;
                 exit_editor = 1;
                 break;
                 
-            default:
+            default: // Обычные символы
                 if (c >= 32 && c <= 126 && content_len < 255) {
                     for (int i = content_len; i > cursor_pos; i--) {
                         content[i] = content[i-1];
@@ -1459,7 +1486,9 @@ void writer_command(const char* filename) {
                     content[cursor_pos] = c;
                     content_len++;
                     cursor_pos++;
+                    content[content_len] = '\0';
                     
+                    // Перерисовываем содержимое
                     text_color = 0x1F;
                     for (int r = 1; r < ROWS - 1; r++) {
                         for (int c = 0; c < COLS; c++) {
@@ -1481,13 +1510,19 @@ void writer_command(const char* filename) {
         }
     }
     
+    // Сохранение файла
     if (save_file) {
-        strcpy(file->content, content);
-        file->size = strlen(content);
-        fs_mark_dirty();
-        prints("\nFile saved: ");
-        prints(filename);
-        newline();
+        if (strlen(content) < sizeof(file->content)) {
+            strcpy(file->content, content);
+            file->size = strlen(content);
+            fs_mark_dirty();
+            fs_save_to_disk();
+            prints("\nFile saved: ");
+            prints(filename);
+            newline();
+        } else {
+            prints("\nError: File content too large\n");
+        }
     }
     
     text_color = old_color;
