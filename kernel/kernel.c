@@ -1561,6 +1561,103 @@ void config_command() {
     clear_screen();
 }
 
+void watch_command() {
+    unsigned char old_color = text_color;
+    text_color = 0x0A; // Зеленый цвет
+
+    // Начальная отрисовка статичного ASCII-арта "WexOS"
+    clear_screen();
+    cursor_row = 1; cursor_col = 20;
+    prints(" __      __ _______  ____  ");
+    cursor_row++; cursor_col = 20;
+    prints("|  |    |  |  ___  ||  _ \\ ");
+    cursor_row++; cursor_col = 20;
+    prints("|  |    |  | |___| || | | |");
+    cursor_row++; cursor_col = 20;
+    prints("|  |___ |  | |____ || | | |");
+    cursor_row++; cursor_col = 20;
+    prints("|______||__|_______||_| |_|");
+
+    while (1) {
+        // Проверка на ESC
+        unsigned char st = inb(0x64);
+        if (st & 1) {
+            unsigned char sc = inb(0x60);
+            if (sc == 0x01) { // ESC код
+                text_color = old_color;
+                clear_screen();
+                prints("> ");
+                return;
+            }
+        }
+
+        // Ожидание обновления RTC
+        outb(0x70, 0x0A);
+        while (inb(0x71) & 0x80);
+
+        // Чтение времени и даты из RTC
+        unsigned char second = bcd_to_bin(rtc_read(0x00));
+        unsigned char minute = bcd_to_bin(rtc_read(0x02));
+        unsigned char hour = bcd_to_bin(rtc_read(0x04));
+        unsigned char day = bcd_to_bin(rtc_read(0x07));
+        unsigned char month = bcd_to_bin(rtc_read(0x08));
+        unsigned char year = bcd_to_bin(rtc_read(0x09));
+        unsigned char century = bcd_to_bin(rtc_read(0x32));
+
+        int full_year = century * 100 + year;
+
+        // Очистка только области времени
+        cursor_row = 8; cursor_col = 30;
+        for (int i = 0; i < 20; i++) putchar(' ');
+
+        // Отображение времени
+        char time_buf[50];
+        char tmp[10];
+        strcpy(time_buf, "Time: ");
+        itoa(hour, tmp, 10);
+        if (hour < 10) strcat(time_buf, "0");
+        strcat(time_buf, tmp);
+        strcat(time_buf, ":");
+        itoa(minute, tmp, 10);
+        if (minute < 10) strcat(time_buf, "0");
+        strcat(time_buf, tmp);
+        strcat(time_buf, ":");
+        itoa(second, tmp, 10);
+        if (second < 10) strcat(time_buf, "0");
+        strcat(time_buf, tmp);
+
+        cursor_row = 8; cursor_col = 30;
+        prints(time_buf);
+
+        // Очистка только области даты
+        cursor_row = 10; cursor_col = 30;
+        for (int i = 0; i < 20; i++) putchar(' ');
+
+        // Отображение даты
+        char date_buf[50];
+        strcpy(date_buf, "Date: ");
+        itoa(full_year, tmp, 10);
+        strcat(date_buf, tmp);
+        strcat(date_buf, "-");
+        itoa(month, tmp, 10);
+        if (month < 10) strcat(date_buf, "0");
+        strcat(date_buf, tmp);
+        strcat(date_buf, "-");
+        itoa(day, tmp, 10);
+        if (day < 10) strcat(date_buf, "0");
+        strcat(date_buf, tmp);
+
+        cursor_row = 10; cursor_col = 30;
+        prints(date_buf);
+
+        // Инструкция выхода
+        cursor_row = 12; cursor_col = 30;
+        prints("Press ESC to exit");
+
+        delay(1); // Обновление каждую секунду
+    }
+}
+
 /* Command history function */
 void history_command() {
     prints("Command History:\n");
@@ -1689,6 +1786,7 @@ void run_command(char* line) {
     else if(strcasecmp(line, "echo") == 0) { while(*p == ' ') p++; prints(p); newline(); }
     else if(strcasecmp(line, "reboot") == 0) reboot_system();
     else if(strcasecmp(line, "shutdown") == 0) shutdown_system();
+	else if(strcasecmp(line, "watch") == 0) watch_command();
     else if(strcasecmp(line, "clear") == 0) clear_screen();
 	else if(strcasecmp(line, "memory") == 0) memory_command();
     else if(strcasecmp(line, "ls") == 0) fs_ls();
