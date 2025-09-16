@@ -6,25 +6,17 @@ typedef unsigned short u16;
 typedef unsigned char u8;
 
 #define NULL ((void*)0)
+#define MAX_NAME 256      // Макс длина имени файла или директории
+#define MAX_PATH 1024     // Макс длина полного пути
+#define SECTOR_SIZE 512   // Размер 1 сектора 
+#define FS_SECTOR_START 1
+#define MAX_FILES 64
+#define MAX_HISTORY 10
 
 /* Function prototypes */
 void itoa(int value, char* str, int base);
 void coreview_command(void);
 void putchar(char ch); 
-
-/* Multiboot header */
-typedef struct {
-    u32 magic;
-    u32 flags;
-    u32 checksum;
-} __attribute__((packed)) multiboot_header_t;
-
-multiboot_header_t multiboot_header __attribute__((section(".multiboot"))) = {
-    MULTIBOOT_MAGIC,
-    MULTIBOOT_FLAGS,
-    -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
-};
-
 void memcpy(void* dst, void* src, int len);
 int strcmp(const char* a, const char* b);
 int strlen(const char* s);
@@ -39,6 +31,20 @@ void ata_read_sector(u32 lba, u8* buffer);
 void ata_write_sector(u32 lba, u8* buffer);
 void ata_wait_ready();
 void ata_wait_drq();
+void memory_command(void);
+
+/* Multiboot header */
+typedef struct {
+    u32 magic;
+    u32 flags;
+    u32 checksum;
+} __attribute__((packed)) multiboot_header_t;
+
+multiboot_header_t multiboot_header __attribute__((section(".multiboot"))) = {
+    MULTIBOOT_MAGIC,
+    MULTIBOOT_FLAGS,
+    -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
+};
 
 /* VGA text buffer */
 volatile unsigned short* VGA = (unsigned short*)0xB8000;
@@ -74,14 +80,8 @@ static inline void outw(unsigned short port, u16 val) {
 #define ATA_STATUS 0x1F7
 #define ATA_CMD 0x1F7
 
-#define SECTOR_SIZE 512
-#define FS_SECTOR_START 1
-#define MAX_FILES 64
-#define MAX_NAME 16
-#define MAX_HISTORY 10
-
 typedef struct { 
-    char name[MAX_NAME]; 
+    char name[MAX_PATH]; // MAX_PATH
     int is_dir; 
     char content[256]; 
     u32 next_sector;
@@ -90,7 +90,7 @@ typedef struct {
 
 FSNode fs_cache[MAX_FILES];
 int fs_count = 0;
-char current_dir[MAX_NAME] = "/";
+char current_dir[MAX_PATH] = "/"; //  MAX_PATH
 int fs_dirty = 0;
 
 /* Command history */
@@ -159,8 +159,12 @@ void fs_load_from_disk() {
     fs_dirty = 0;
 
     while (sector != 0 && fs_count < MAX_FILES) {
-        ata_read_sector(sector, sector_buffer);
-        memcpy(&fs_cache[fs_count], sector_buffer, sizeof(FSNode));
+        u8 temp_buffer[1536]; // 3 сектора по 512 байт
+        for (int i = 0; i < 3; i++) {
+            ata_read_sector(sector + i, sector_buffer);
+            memcpy(temp_buffer + i * SECTOR_SIZE, sector_buffer, SECTOR_SIZE);
+        }
+        memcpy(&fs_cache[fs_count], temp_buffer, sizeof(FSNode));
         sector = fs_cache[fs_count].next_sector;
         fs_count++;
     }
@@ -182,25 +186,18 @@ void fs_save_to_disk() {
     u8 sector_buffer[SECTOR_SIZE];
     u32 sector = FS_SECTOR_START;
 
-    memcpy(sector_buffer, &fs_cache[0], sizeof(FSNode));
-    ata_write_sector(sector, sector_buffer);
-
-    for (int i = 1; i < fs_count; i++) {
-        sector = fs_cache[i-1].next_sector;
-        if (sector == 0) {
-            sector = FS_SECTOR_START + i;
-            fs_cache[i-1].next_sector = sector;
+    for (int i = 0; i < fs_count; i++) {
+        u8 temp_buffer[1536]; // 3 сектора по 512 байт
+        memcpy(temp_buffer, &fs_cache[i], sizeof(FSNode));
+        for (int j = 0; j < 3; j++) {
+            memcpy(sector_buffer, temp_buffer + j * SECTOR_SIZE, SECTOR_SIZE);
+            ata_write_sector(sector + j, sector_buffer);
         }
-        memcpy(sector_buffer, &fs_cache[i], sizeof(FSNode));
-        ata_write_sector(sector, sector_buffer);
-    }
-
-    if (fs_count > 0) {
-        u32 last_sector = fs_cache[fs_count-1].next_sector;
-        if (last_sector != 0) {
-            memcpy(sector_buffer, &fs_cache[fs_count-1], sizeof(FSNode));
-            sector_buffer[sizeof(FSNode) - 4] = 0;
-            ata_write_sector(last_sector, sector_buffer);
+        sector = (i == fs_count - 1) ? 0 : FS_SECTOR_START + (i + 1) * 3;
+        if (i < fs_count - 1) {
+            fs_cache[i].next_sector = sector;
+        } else {
+            fs_cache[i].next_sector = 0;
         }
     }
 
@@ -220,21 +217,21 @@ void fs_ls() {
     prints("Contents of ");
     prints(current_dir);
     prints(":\n");
-    
-    for(int i=0;i<fs_count;i++){
-        if(strcmp(current_dir, "/") == 0) {
+
+    for (int i = 0; i < fs_count; i++) {
+        if (strcmp(current_dir, "/") == 0) {
             char* slash = strchr(fs_cache[i].name, '/');
-            if(slash == NULL || slash == fs_cache[i].name) {
-                prints(fs_cache[i].name); 
-                if(fs_cache[i].is_dir) prints("/"); 
+            if (slash == NULL || slash == fs_cache[i].name) {
+                prints(fs_cache[i].name);
+                if (fs_cache[i].is_dir) prints("/");
                 newline();
             }
         } else {
-            if(strstr(fs_cache[i].name, current_dir) == fs_cache[i].name) {
+            if (strstr(fs_cache[i].name, current_dir) == fs_cache[i].name) {
                 char* name_part = fs_cache[i].name + strlen(current_dir);
-                if(*name_part != '\0') {
-                    prints(name_part); 
-                    if(fs_cache[i].is_dir) prints("/"); 
+                if (*name_part != '\0' && strchr(name_part, '/') == NULL) {
+                    prints(name_part);
+                    if (fs_cache[i].is_dir) prints("/");
                     newline();
                 }
             }
@@ -243,128 +240,220 @@ void fs_ls() {
 }
 
 void fs_mkdir(const char* name) {
-    if(fs_count<MAX_FILES){
-        char full_path[MAX_NAME * 2];
-        if(strcmp(current_dir, "/") == 0) {
-            strcpy(full_path, name);
-        } else {
-            strcpy(full_path, current_dir);
-            strcat(full_path, name);
-        }
-        
-        strcpy(fs_cache[fs_count].name, full_path);
-        fs_cache[fs_count].is_dir=1;
-        fs_cache[fs_count].content[0]='\0';
-        fs_cache[fs_count].next_sector = 0;
-        fs_cache[fs_count].size = 0;
-        fs_count++;
-        fs_mark_dirty();
-        prints("Directory '");
-        prints(name);
-        prints("' created\n");
-    } else {
+    if (fs_count >= MAX_FILES) {
         prints("Error: Maximum files reached\n");
+        return;
     }
-}
 
-void fs_touch(const char* name) {
-    if(fs_count<MAX_FILES){
-        char full_path[MAX_NAME * 2];
-        if(strcmp(current_dir, "/") == 0) {
-            strcpy(full_path, name);
-        } else {
-            strcpy(full_path, current_dir);
-            strcat(full_path, name);
+    char full_path[MAX_PATH];
+    if (strcmp(current_dir, "/") == 0) {
+        if (strlen(name) >= MAX_NAME) {
+            prints("Error: Name too long: ");
+            prints(name);
+            newline();
+            return;
         }
-        
-        strcpy(fs_cache[fs_count].name, full_path);
-        fs_cache[fs_count].is_dir=0;
-        fs_cache[fs_count].content[0] = '\0';
-        fs_cache[fs_count].next_sector = 0;
-        fs_cache[fs_count].size = 0;
-        fs_count++;
-        fs_mark_dirty();
-        prints("File '");
-        prints(name);
-        prints("' created\n");
-    } else {
-        prints("Error: Maximum files reached\n");
-    }
-}
-
-void fs_rm(const char* name) {
-    char full_path[MAX_NAME * 2];
-    if(strcmp(current_dir, "/") == 0) {
         strcpy(full_path, name);
     } else {
+        if (strlen(current_dir) + strlen(name) + 1 >= MAX_PATH) {
+            prints("Error: Path too long: ");
+            prints(name);
+            newline();
+            return;
+        }
         strcpy(full_path, current_dir);
         strcat(full_path, name);
     }
-    
-    for(int i=0;i<fs_count;i++){
-        if(strcmp(fs_cache[i].name, full_path)==0){
-            if(fs_cache[i].is_dir) {
-                int has_children = 0;
-                for(int j=0;j<fs_count;j++){
-                    if(j != i && strstr(fs_cache[j].name, full_path) == fs_cache[j].name) {
-                        has_children = 1;
-                        break;
-                    }
-                }
-                if(has_children) {
-                    prints("Error: Directory not empty\n");
-                    return;
-                }
-            }
-            for(int j=i;j<fs_count-1;j++){
-                fs_cache[j]=fs_cache[j+1];
-            }
-            fs_count--;
-            fs_mark_dirty();
-            prints("'");
+
+    // Проверка на существование
+    for (int i = 0; i < fs_count; i++) {
+        if (strcmp(fs_cache[i].name, full_path) == 0) {
+            prints("Error: Name already exists: ");
             prints(name);
-            prints("' removed\n");
+            newline();
             return;
         }
     }
-    prints("Error: File or directory not found: ");
+
+    strcpy(fs_cache[fs_count].name, full_path);
+    fs_cache[fs_count].is_dir = 1;
+    fs_cache[fs_count].content[0] = '\0';
+    fs_cache[fs_count].next_sector = 0;
+    fs_cache[fs_count].size = 0;
+    fs_count++;
+    fs_mark_dirty();
+    prints("Directory '");
     prints(name);
-    newline();
+    prints("' created\n");
+}
+
+void fs_touch(const char* name) {
+    if (fs_count >= MAX_FILES) {
+        prints("Error: Maximum files reached\n");
+        return;
+    }
+
+    char full_path[MAX_PATH];
+    if (strcmp(current_dir, "/") == 0) {
+        if (strlen(name) >= MAX_NAME) {
+            prints("Error: Name too long: ");
+            prints(name);
+            newline();
+            return;
+        }
+        strcpy(full_path, name);
+    } else {
+        if (strlen(current_dir) + strlen(name) + 1 >= MAX_PATH) {
+            prints("Error: Path too long: ");
+            prints(name);
+            newline();
+            return;
+        }
+        strcpy(full_path, current_dir);
+        strcat(full_path, name);
+    }
+
+    // Проверка на существование
+    for (int i = 0; i < fs_count; i++) {
+        if (strcmp(fs_cache[i].name, full_path) == 0) {
+            prints("Error: Name already exists: ");
+            prints(name);
+            newline();
+            return;
+        }
+    }
+
+    strcpy(fs_cache[fs_count].name, full_path);
+    fs_cache[fs_count].is_dir = 0;
+    fs_cache[fs_count].content[0] = '\0';
+    fs_cache[fs_count].next_sector = 0;
+    fs_cache[fs_count].size = 0;
+    fs_count++;
+    fs_mark_dirty();
+    prints("File '");
+    prints(name);
+    prints("' created\n");
+}
+
+void fs_rm(const char* name) {
+    char full_path[MAX_PATH];
+    if (strcmp(current_dir, "/") == 0) {
+        if (strlen(name) >= MAX_NAME) {
+            prints("Error: Name too long: ");
+            prints(name);
+            newline();
+            return;
+        }
+        strcpy(full_path, name);
+    } else {
+        if (strlen(current_dir) + strlen(name) + 1 >= MAX_PATH) {
+            prints("Error: Path too long: ");
+            prints(name);
+            newline();
+            return;
+        }
+        strcpy(full_path, current_dir);
+        strcat(full_path, name);
+    }
+
+    // Проверяем, существует ли файл или директория
+    int found = -1;
+    for (int i = 0; i < fs_count; i++) {
+        if (strcmp(fs_cache[i].name, full_path) == 0) {
+            found = i;
+            break;
+        }
+    }
+
+    if (found == -1) {
+        prints("Error: File or directory not found: ");
+        prints(name);
+        newline();
+        return;
+    }
+
+    // Если это директория, удаляем все её содержимое
+    if (fs_cache[found].is_dir) {
+        char dir_path[MAX_PATH];
+        strcpy(dir_path, full_path);
+        if (strcmp(full_path, "/") != 0) {
+            if (strlen(dir_path) + 1 >= MAX_PATH) {
+                prints("Error: Directory path too long\n");
+                return;
+            }
+            strcat(dir_path, "/");
+        }
+
+        // Удаляем все файлы и поддиректории
+        for (int i = fs_count - 1; i >= 0; i--) {
+            if (i != found && strstr(fs_cache[i].name, dir_path) == fs_cache[i].name) {
+                for (int j = i; j < fs_count - 1; j++) {
+                    fs_cache[j] = fs_cache[j + 1];
+                }
+                fs_count--;
+            }
+        }
+    }
+
+    // Удаляем сам файл или директорию
+    for (int i = found; i < fs_count - 1; i++) {
+        fs_cache[i] = fs_cache[i + 1];
+    }
+    fs_count--;
+    fs_mark_dirty();
+
+    prints("'");
+    prints(name);
+    prints("' removed\n");
 }
 
 void fs_cd(const char* name) {
-    if(strcmp(name, "..") == 0) {
-        if(strcmp(current_dir, "/") != 0) {
+    if (strcmp(name, "..") == 0) {
+        if (strcmp(current_dir, "/") != 0) {
             char* last_slash = strrchr(current_dir, '/');
-            if(last_slash != NULL) {
+            if (last_slash != NULL) {
                 *last_slash = '\0';
-                if(current_dir[0] == '\0') {
+                if (current_dir[0] == '\0') {
                     strcpy(current_dir, "/");
                 }
             }
         }
-    } else if(strcmp(name, "/") == 0) {
+    } else if (strcmp(name, "/") == 0) {
         strcpy(current_dir, "/");
     } else {
-        char full_path[MAX_NAME * 2];
-        if(strcmp(current_dir, "/") == 0) {
+        char full_path[MAX_PATH];
+        if (strcmp(current_dir, "/") == 0) {
+            if (strlen(name) >= MAX_NAME) {
+                prints("Error: Name too long: ");
+                prints(name);
+                newline();
+                return;
+            }
             strcpy(full_path, name);
         } else {
+            if (strlen(current_dir) + strlen(name) + 1 >= MAX_PATH) {
+                prints("Error: Path too long: ");
+                prints(name);
+                newline();
+                return;
+            }
             strcpy(full_path, current_dir);
             strcat(full_path, name);
         }
-        
+
         int found = 0;
-        for(int i=0;i<fs_count;i++){
-            if(strcmp(fs_cache[i].name, full_path)==0 && fs_cache[i].is_dir){
+        for (int i = 0; i < fs_count; i++) {
+            if (strcmp(fs_cache[i].name, full_path) == 0 && fs_cache[i].is_dir) {
                 strcpy(current_dir, full_path);
-                strcat(current_dir, "/");
+                if (strcmp(full_path, "/") != 0) {
+                    strcat(current_dir, "/");
+                }
                 found = 1;
                 break;
             }
         }
-        
-        if(!found) {
+
+        if (!found) {
             prints("Error: Directory not found: ");
             prints(name);
             newline();
@@ -373,16 +462,28 @@ void fs_cd(const char* name) {
 }
 
 FSNode* fs_find_file(const char* name) {
-    char full_path[MAX_NAME * 2];
-    if(strcmp(current_dir, "/") == 0) {
+    char full_path[MAX_PATH];
+    if (strcmp(current_dir, "/") == 0) {
+        if (strlen(name) >= MAX_NAME) {
+            prints("Error: Name too long: ");
+            prints(name);
+            newline();
+            return NULL;
+        }
         strcpy(full_path, name);
     } else {
+        if (strlen(current_dir) + strlen(name) + 1 >= MAX_PATH) {
+            prints("Error: Path too long: ");
+            prints(name);
+            newline();
+            return NULL;
+        }
         strcpy(full_path, current_dir);
         strcat(full_path, name);
     }
-    
-    for(int i=0;i<fs_count;i++){
-        if(strcmp(fs_cache[i].name, full_path)==0 && !fs_cache[i].is_dir){
+
+    for (int i = 0; i < fs_count; i++) {
+        if (strcmp(fs_cache[i].name, full_path) == 0 && !fs_cache[i].is_dir) {
             return &fs_cache[i];
         }
     }
@@ -390,24 +491,66 @@ FSNode* fs_find_file(const char* name) {
 }
 
 void fs_copy(const char* src_name, const char* dest_name) {
-    FSNode* src = fs_find_file(src_name);
+    char src_path[MAX_PATH];
+    if (strcmp(current_dir, "/") == 0) {
+        if (strlen(src_name) >= MAX_NAME) {
+            prints("Error: Source name too long: ");
+            prints(src_name);
+            newline();
+            return;
+        }
+        strcpy(src_path, src_name);
+    } else {
+        if (strlen(current_dir) + strlen(src_name) + 1 >= MAX_PATH) {
+            prints("Error: Source path too long: ");
+            prints(src_name);
+            newline();
+            return;
+        }
+        strcpy(src_path, current_dir);
+        strcat(src_path, src_name);
+    }
+
+    FSNode* src = NULL;
+    for (int i = 0; i < fs_count; i++) {
+        if (strcmp(fs_cache[i].name, src_path) == 0 && !fs_cache[i].is_dir) {
+            src = &fs_cache[i];
+            break;
+        }
+    }
+
     if (!src) {
         prints("Error: Source file not found: ");
         prints(src_name);
         newline();
         return;
     }
+
     if (fs_count >= MAX_FILES) {
         prints("Error: Maximum files reached\n");
         return;
     }
-    char full_path[MAX_NAME * 2];
+
+    char full_path[MAX_PATH];
     if (strcmp(current_dir, "/") == 0) {
+        if (strlen(dest_name) >= MAX_NAME) {
+            prints("Error: Destination name too long: ");
+            prints(dest_name);
+            newline();
+            return;
+        }
         strcpy(full_path, dest_name);
     } else {
+        if (strlen(current_dir) + strlen(dest_name) + 1 >= MAX_PATH) {
+            prints("Error: Destination path too long: ");
+            prints(dest_name);
+            newline();
+            return;
+        }
         strcpy(full_path, current_dir);
         strcat(full_path, dest_name);
     }
+
     strcpy(fs_cache[fs_count].name, full_path);
     fs_cache[fs_count].is_dir = 0;
     strcpy(fs_cache[fs_count].content, src->content);
@@ -433,28 +576,6 @@ void fs_size(const char* name) {
     prints("File size: ");
     prints(size_str);
     prints(" KB\n");
-}
-
-void memory_command() {
-    unsigned char* mem_base = (unsigned char*)0x1000;
-    for (int row = 0; row < 16; row++) {
-        text_color = (row % 15) + 1;
-        char addr_str[9];
-        itoa((int)(mem_base + row * 16), addr_str, 16);
-        prints("0x");
-        prints(addr_str);
-        prints(": ");
-        for (int col = 0; col < 16; col++) {
-            unsigned char byte = *(mem_base + row * 16 + col);
-            char byte_str[3];
-            itoa(byte, byte_str, 16);
-            if (byte < 0x10) prints("0");
-            prints(byte_str);
-            putchar(' ');
-        }
-        newline();
-    }
-    text_color = 0x07;
 }
 
 /* String functions */
@@ -1714,6 +1835,7 @@ void show_help() {
 		"  memory   - Memory dump",
         "  cpu      - Show CPU information",
         "  date     - Show date without network",
+		"  watch    - A watch with an easy interface",
         "  biosver  - Show BIOS version",
         "  calc     - Calculator (calc expression)",
         "  time     - Show time without network",
@@ -1811,90 +1933,140 @@ void run_command(char* line) {
     else if(strcasecmp(line, "kill") == 0) { while(*p == ' ') p++; if(*p) kill_command(p); else prints("Usage: kill <name or pid>\n"); }
     else if(strcasecmp(line, "coreview") == 0) coreview_command();
     else if(strcasecmp(line, "color") == 0) { while(*p == ' ') p++; if(*p) text_color = (*p - '0'); else prints("Usage: color <0-7>\n"); }
-    else if(strcasecmp(line, "colorf") == 0) { while(*p == ' ') p++; if(*p) text_color = (*p - '0') << 4; else prints("Usage: colorf <0-7>\n"); }
-    else if(strcasecmp(line, "install") == 0) {
-        while(*p == ' ') p++;
-        if(*p) {
-            int mode = atoi(p);
-            if(mode == 0) install_virtual();
-            else if(mode == 1) install_disk();
-            else prints("Invalid install mode. Use: install 0 (virtual) or install 1 (disk)\n");
-        } else {
-            prints("Usage: install 0 (virtual FS) or install 1 (format disk)\n");
-        }
+        else if(strcasecmp(line, "colorf") == 0) { while(*p == ' ') p++; if(*p) text_color = (*p - '0') | (text_color & 0xF0); else prints("Usage: colorf <0-7>\n"); }
+    else if(strcasecmp(line, "install") == 0) { 
+        while(*p == ' ') p++; 
+        if(*p == '0') install_virtual();
+        else if(*p == '1') install_disk();
+        else prints("Usage: install <0=virtual, 1=disk>\n"); 
     }
     else if(strcasecmp(line, "config") == 0) config_command();
     else if(strcasecmp(line, "cpu") == 0) cpu_command();
     else if(strcasecmp(line, "date") == 0) date_command();
     else if(strcasecmp(line, "biosver") == 0) biosver_command();
-    else if(strcasecmp(line, "calc") == 0) { while(*p == ' ') p++; if(*p) calc_command(p); else prints("Usage: calc <expression>\n"); }
+    else if(strcasecmp(line, "calc") == 0) { while(*p == ' ') p++; calc_command(p); }
     else if(strcasecmp(line, "time") == 0) time_command();
     else if(strcasecmp(line, "size") == 0) { while(*p == ' ') p++; if(*p) fs_size(p); else prints("Usage: size <filename>\n"); }
     else if(strcasecmp(line, "osver") == 0) osver_command();
     else if(strcasecmp(line, "history") == 0) history_command();
-    else prints("Unknown command\n");
+    else if(strcasecmp(line, "watch") == 0) watch_command();
+    else {
+        prints("Command not found: ");
+        prints(line);
+        newline();
+    }
     
-    if(saved) *--p = saved;
+    if(saved) *p = saved;
 }
 
-/* Main entry */
+/* Memory dump command */
+void memory_command() {
+    prints("Memory Dump (0x1000 - 0x10FF):\n");
+    for (u32 addr = 0x1000; addr < 0x1100; addr += 16) {
+        char addr_str[10];
+        itoa(addr, addr_str, 16);
+        prints("0x");
+        for (int i = strlen(addr_str); i < 4; i++) prints("0");
+        prints(addr_str);
+        prints(": ");
+        
+        for (int i = 0; i < 16; i++) {
+            unsigned char val = *(unsigned char*)(addr + i);
+            char val_str[3];
+            itoa(val, val_str, 16);
+            if (val < 0x10) prints("0");
+            prints(val_str);
+            prints(" ");
+        }
+        prints(" |");
+        for (int i = 0; i < 16; i++) {
+            unsigned char val = *(unsigned char*)(addr + i);
+            if (val >= 32 && val <= 126) putchar(val);
+            else putchar('.');
+        }
+        prints("|\n");
+    }
+}
+
+/* Kernel main */
 void _start() {
-    fs_init();
-    init_processes();
+    text_color = 0x07;
     clear_screen();
-    prints("WexOS TinyShell v0.5 - Persistent FS\n");
-    prints("Type 'help' for available commands\n\n> ");
     
-    char line[128];
-    int idx = 0;
+    init_processes();
+    fs_init();
+    
+    prints("WexOS TinyShell v0.5\n");
+    prints("Type 'help' for commands\n\n");
+    
+    char cmd_buf[128];
+    int cmd_idx = 0;
+    int history_pos = -1;
     
     while(1) {
-        char c = getch_with_arrows();
-        if(c == '\n') {
-            if(idx > 0) {
-                putchar('\n');
-                line[idx] = 0;
-                run_command(line);
-                fs_save_to_disk();
-                idx = 0;
-                prints("> ");
-            }
-        }
-        else if(c == '\b') {
-            if(idx > 0) {
-                idx--;
-                cursor_col = (cursor_col == 0) ? 0 : cursor_col - 1;
-                putchar(' ');
-                cursor_col = (cursor_col == 0) ? 0 : cursor_col - 1;
-            }
-        }
-        else if(c == 'U' && history_count > 0) {
-            if(history_index > 0) history_index--;
-            strcpy(line, command_history[history_index]);
-            idx = strlen(line);
+        prints("> ");
+        
+        while(1) {
             cursor_row = cursor_row;
-            cursor_col = 2;
-            for(int i = 0; i < COLS - 2; i++) putchar(' ');
-            cursor_row = cursor_row;
-            cursor_col = 2;
-            prints("> ");
-            prints(line);
-        }
-        else if(c == 'D' && history_count > 0) {
-            if(history_index < history_count - 1) history_index++;
-            strcpy(line, command_history[history_index]);
-            idx = strlen(line);
-            cursor_row = cursor_row;
-            cursor_col = 2;
-            for(int i = 0; i < COLS - 2; i++) putchar(' ');
-            cursor_row = cursor_row;
-            cursor_col = 2;
-            prints("> ");
-            prints(line);
-        }
-        else {
-            if(idx < 127) {
-                line[idx++] = c;
+            cursor_col = cursor_col;
+            
+            char c = getch_with_arrows();
+            
+            if(c == '\n') {
+                cmd_buf[cmd_idx] = '\0';
+                newline();
+                run_command(cmd_buf);
+                cmd_idx = 0;
+                history_pos = -1;
+                break;
+            } else if(c == '\b') {
+                if(cmd_idx > 0) {
+                    cmd_idx--;
+                    cmd_buf[cmd_idx] = '\0';
+                    cursor_col--;
+                    putchar(' ');
+                    cursor_col--;
+                }
+            } else if(c == 'U') {
+                if(history_pos < history_count - 1) {
+                    history_pos++;
+                    strcpy(cmd_buf, command_history[history_count - 1 - history_pos]);
+                    cmd_idx = strlen(cmd_buf);
+                    
+                    cursor_row = cursor_row;
+                    cursor_col = cursor_col - (cmd_idx + 2);
+                    for(int i = 0; i < COLS; i++) putchar(' ');
+                    cursor_col = cursor_col - (cmd_idx + 2);
+                    prints("> ");
+                    prints(cmd_buf);
+                }
+            } else if(c == 'D') {
+                if(history_pos > 0) {
+                    history_pos--;
+                    strcpy(cmd_buf, command_history[history_count - 1 - history_pos]);
+                    cmd_idx = strlen(cmd_buf);
+                    
+                    cursor_row = cursor_row;
+                    cursor_col = cursor_col - (cmd_idx + 2);
+                    for(int i = 0; i < COLS; i++) putchar(' ');
+                    cursor_col = cursor_col - (cmd_idx + 2);
+                    prints("> ");
+                    prints(cmd_buf);
+                } else if(history_pos == 0) {
+                    history_pos = -1;
+                    cmd_idx = 0;
+                    cmd_buf[0] = '\0';
+                    
+                    cursor_row = cursor_row;
+                    cursor_col = cursor_col - (cmd_idx + 2);
+                    for(int i = 0; i < COLS; i++) putchar(' ');
+                    cursor_col = cursor_col - (cmd_idx + 2);
+                    prints("> ");
+                }
+            } else if(c >= 32 && c <= 126 && cmd_idx < 127) {
+                cmd_buf[cmd_idx] = c;
+                cmd_idx++;
+                cmd_buf[cmd_idx] = '\0';
                 putchar(c);
             }
         }
