@@ -1039,8 +1039,8 @@ void coreview_command(void) {
 
 /* OS version command */
 void osver_command() {
-    prints("OS Version: WexOS TinyShell v0.5\n");
-    prints("Build Date: 2025-09-15\n");
+    prints("OS Version: WexOS TinyShell v0.6\n");
+    prints("Build Date: 2025-09-16\n");
 }
 
 /* Date command without network */
@@ -1996,7 +1996,7 @@ void _start() {
     init_processes();
     fs_init();
     
-    prints("WexOS TinyShell v0.5\n");
+    prints("WexOS TinyShell v0.6\n");
     prints("Type 'help' for commands\n\n");
     
     char cmd_buf[128];
