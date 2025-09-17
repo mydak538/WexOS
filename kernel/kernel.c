@@ -575,20 +575,55 @@ void fs_copy(const char* src_name, const char* dest_name) {
     prints("'\n");
 }
 
+int folder_size(const char* folder_path) {
+    int total = 0;
+    char path_with_slash[MAX_PATH];
+    strcpy(path_with_slash, folder_path);
+    if (folder_path[strlen(folder_path) - 1] != '/') {
+        strcat(path_with_slash, "/");
+    }
+
+    for (int i = 0; i < fs_count; i++) {
+        FSNode* node = &fs_cache[i];
+        if (!node->is_dir && strstr(node->name, path_with_slash) == node->name) {
+            total += node->size;
+        }
+    }
+    return total;
+}
+
 void fs_size(const char* name) {
-    FSNode* file = fs_find_file(name);
-    if (!file) {
-        prints("Error: File not found: ");
+    FSNode* node = NULL;
+    // ищем узел с точным именем
+    for (int i = 0; i < fs_count; i++) {
+        if (strcmp(fs_cache[i].name, name) == 0) {
+            node = &fs_cache[i];
+            break;
+        }
+    }
+
+    if (!node) {
+        prints("Error: File or folder not found: ");
         prints(name);
         newline();
         return;
     }
+
+    int size;
+    if (node->is_dir) {
+        size = folder_size(node->name);
+        prints("Folder size: ");
+    } else {
+        size = node->size;
+        prints("File size: ");
+    }
+
     char size_str[16];
-    itoa(file->size, size_str, 10);
-    prints("File size: ");
+    itoa(size, size_str, 10);
     prints(size_str);
     prints(" Bytes\n");
 }
+
 
 /* String functions */
 void memcpy(void* dst, void* src, int len) {
@@ -1202,57 +1237,6 @@ SystemConfig sys_config = {
 
 SystemConfig temp_config;
 
-/* Install functions */
-void install_virtual() {
-    fs_init();
-    fs_mkdir("SystemRoot");
-    fs_mkdir("SystemRoot/bin");
-    fs_touch("SystemRoot/bin/taskmgr");
-    fs_touch("SystemRoot/bin/config");
-    fs_touch("SystemRoot/kernel.sys");
-    
-    fs_touch("help.txt");
-    FSNode* help_file = fs_find_file("help.txt");
-    if (help_file) {
-        strcpy(help_file->content, 
-            "WexOS TinyShell Commands:\n"
-            "help - Show this help message\n"
-            "echo [text] - Echo text to screen\n"
-            "reboot - Reboot the system\n"
-            "shutdown - Shutdown the system\n"
-            "clear - Clear the screen\n"
-            "ls - List files\n"
-            "cd [dir] - Change directory\n"
-            "mkdir [name] - Create directory\n"
-            "rm [name] - Remove file/directory\n"
-            "touch [name] - Create empty file\n"
-            "copy [src] [dest] - Copy file\n"
-            "writer [file] - Edit file\n"
-            "ps - List processes\n"
-            "kill [pid/name] - Kill process\n"
-            "coreview - Show CPU core registers\n"
-            "color [0-7] - Set text color\n"
-            "colorf [0-7] - Set foreground color\n"
-            "install [0/1] - Install system\n"
-            "config - System configuration\n"
-            "cpu - Show CPU information\n"
-            "date - Show date without network\n"
-            "biosver - Show BIOS version\n"
-            "calc [expression] - Calculator\n"
-            "time - Show time without network\n"
-            "size [file] - Show file size in KB\n"
-            "osver - Show OS version\n"
-            "history - Show command history\n"
-        );
-        help_file->size = strlen(help_file->content);
-        fs_mark_dirty();
-    }
-    
-    prints("System installed to virtual FS\n");
-    prints("Help file 'help.txt' created\n");
-    fs_save_to_disk();
-}
-
 void install_disk() {
     prints("\nWARNING: ALL DISKS INCLUDING BOOT DISKS WILL BE FORMATTED TO WexFS FOR OS INSTALLATION.\n");
     prints("CONTINUE? Y/N: ");
@@ -1260,13 +1244,43 @@ void install_disk() {
     char confirm = keyboard_getchar();
     putchar(confirm);
     newline();
-    
+
     if (confirm == 'Y' || confirm == 'y') {
         prints("Formatting disks to WexFS...\n");
+        fs_init();
+
+        prints("Removing old system directories if they exist...\n");
+        fs_rm("home");
+        fs_rm("SystemRoot");
+
+        prints("Creating system directories...\n");
+        fs_mkdir("home");
+        fs_mkdir("home/user");
+        fs_mkdir("home/user/desktop");
+        fs_mkdir("home/user/desktop/RecycleBin");
+        fs_mkdir("home/user/desktop/MyComputer");
+        fs_mkdir("home/user/documents");
+        fs_mkdir("home/user/downloads");
+        fs_mkdir("SystemRoot");
+        fs_mkdir("SystemRoot/bin");
+        fs_mkdir("SystemRoot/logs");
+		fs_mkdir("SystemRoot/drivers");
+		fs_mkdir("SystemRoot/kerneldrivers");
+		
         prints("Copying system files...\n");
-        prints("Installing kernel...\n");
+        fs_touch("SystemRoot/bin/taskmgr.bin");
+        fs_touch("SystemRoot/bin/kernel.bin");
+        fs_touch("SystemRoot/bin/calc.bin");
+        fs_touch("SystemRoot/logs/config.cfg");
+		fs_touch("SystemRoot/drivers/keyboard.sys");
+		fs_touch("SystemRoot/drivers/mouse.sys");
+		fs_touch("SystemRoot/drivers/vga.sys");
+		fs_touch("SystemRoot/kerneldrivers/kernel.sys");
+		fs_touch("SystemRoot/kerneldrivers/ntrsys.sys");
+
         prints("Installation completed successfully!\n");
         prints("Please reboot to start the installed system.\n");
+
         fs_save_to_disk();
     } else {
         prints("Installation cancelled.\n");
@@ -1956,6 +1970,7 @@ void run_command(char* line) {
 	else if(strcasecmp(line, "watch") == 0) watch_command();
     else if(strcasecmp(line, "clear") == 0) clear_screen();
 	else if(strcasecmp(line, "memory") == 0) memory_command();
+	else if(strcasecmp(line, "install") == 0) install_disk();
     else if(strcasecmp(line, "ls") == 0) fs_ls();
     else if(strcasecmp(line, "cd") == 0) { while(*p == ' ') p++; if(*p) fs_cd(p); else prints("Usage: cd <directory>\n"); }
     else if(strcasecmp(line, "mkdir") == 0) { while(*p == ' ') p++; if(*p) fs_mkdir(p); else prints("Usage: mkdir <name>\n"); }
@@ -1979,12 +1994,6 @@ void run_command(char* line) {
     else if(strcasecmp(line, "coreview") == 0) coreview_command();
     else if(strcasecmp(line, "color") == 0) { while(*p == ' ') p++; if(*p) text_color = (*p - '0'); else prints("Usage: color <0-7>\n"); }
         else if(strcasecmp(line, "colorf") == 0) { while(*p == ' ') p++; if(*p) text_color = (*p - '0') | (text_color & 0xF0); else prints("Usage: colorf <0-7>\n"); }
-    else if(strcasecmp(line, "install") == 0) { 
-        while(*p == ' ') p++; 
-        if(*p == '0') install_virtual();
-        else if(*p == '1') install_disk();
-        else prints("Usage: install <0=virtual, 1=disk>\n"); 
-    }
     else if(strcasecmp(line, "config") == 0) config_command();
     else if(strcasecmp(line, "cpu") == 0) cpu_command();
     else if(strcasecmp(line, "date") == 0) date_command();
