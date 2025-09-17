@@ -584,10 +584,10 @@ void fs_size(const char* name) {
         return;
     }
     char size_str[16];
-    itoa(file->size / 1024, size_str, 10);
+    itoa(file->size, size_str, 10);
     prints("File size: ");
     prints(size_str);
-    prints(" KB\n");
+    prints(" Bytes\n");
 }
 
 /* String functions */
@@ -1254,7 +1254,7 @@ void install_virtual() {
 }
 
 void install_disk() {
-    prints("\nWARNING: ALL DISKS INCLUDING BOOT DISKS WILL BE FORMATTED TO FAT32 FOR OS INSTALLATION.\n");
+    prints("\nWARNING: ALL DISKS INCLUDING BOOT DISKS WILL BE FORMATTED TO WexFS FOR OS INSTALLATION.\n");
     prints("CONTINUE? Y/N: ");
     
     char confirm = keyboard_getchar();
@@ -1262,7 +1262,7 @@ void install_disk() {
     newline();
     
     if (confirm == 'Y' || confirm == 'y') {
-        prints("Formatting disks to FAT32...\n");
+        prints("Formatting disks to WexFS...\n");
         prints("Copying system files...\n");
         prints("Installing kernel...\n");
         prints("Installation completed successfully!\n");
@@ -1884,7 +1884,7 @@ void show_help() {
         "  biosver  - Show BIOS version",
         "  calc     - Calculator (calc expression)",
         "  time     - Show time without network",
-        "  size     - Show file size in KB",
+        "  size     - Show file size in Bytes",
         "  osver    - Show OS version",
         "  history  - Show command history",
         NULL
