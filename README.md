@@ -29,7 +29,7 @@ cp bin/kernel.bin iso/boot/
 
 cp -r systemroot iso/SystemRoot
 
-grub-mkrescue -o bin/wexos.iso iso
+grub-mkrescue -d /usr/lib/grub/i386-pc -o wexos.iso iso
 
 </details>
 
