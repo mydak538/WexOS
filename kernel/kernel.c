@@ -955,10 +955,20 @@ void kill_command(const char* arg) {
         text_color = 0x4F;
         clear_screen();
         prints("0x000DIED\n");
-        prints("Error: CRITICAL_PROCESS_DIED\n");
+        prints("Critical Error: CRITICAL_PROCESS_DIED\n");
         prints("Details: Attempted to kill critical kernel process.\n");
         prints("System will reboot in 10 seconds.\n");
-        delay(10);
+        delay(999999); 
+        reboot_system();
+    } else if (strcmp(arg, "shell") == 0) {
+        text_color = 0x4F;
+        clear_screen();
+        prints("0xER00DI\n");
+        prints("Error: SYSTEM_PROCESS_DIED\n");
+        prints("Details: You have completed an important system process and the system cannot continue working.\n");
+        prints("The shell creation process is completed, which caused the error.\n");
+        prints("System will reboot in 10 seconds.\n");
+        delay(999999); 
         reboot_system();
     } else {
         int found = 0;
