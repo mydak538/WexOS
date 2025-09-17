@@ -19,14 +19,10 @@ WexOS - это самодельная операционная система д
 - GCC с поддержкой cross-compilation
 - GRUB (загрузчик)
 - QEMU или VirtualBox
-  
-<details> <summary>Компиляция ядра</summary>
+###Сборка 
+details> <summary>Сборка</summary>
 gcc -m32 -ffreestanding -fno-pie -O2 -c kernel/kernel.c -o bin/kernel.o
-
-</details><details> <summary>Линковка</summary>
 ld -m elf_i386 -T boot/linker.ld -o bin/kernel.bin bin/kernel.o -e _start
-
-</details><details> <summary>Подготовка образа</summary>
 cp bin/kernel.bin iso/boot/
 cp -r systemroot iso/SystemRoot
 grub-mkrescue -o bin/wexos.iso iso
