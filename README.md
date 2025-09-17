@@ -26,6 +26,5 @@ ld -m elf_i386 -T boot/linker.ld -o bin/kernel.bin bin/kernel.o -e _start
 cp bin/kernel.bin iso/boot/
 cp -r systemroot iso/SystemRoot
 grub-mkrescue -o bin/wexos.iso iso
-![Memory WexOS](screen/2.png)
 
 
