@@ -14,6 +14,6 @@ cp bin/kernel.bin iso/boot/
 cp -r systemroot iso/SystemRoot
 
 # сборка ISO
-grub-mkrescue -o bin/wexos.iso iso
+grub-mkrescue -d /usr/lib/grub/i386-pc -o wexos.iso iso
 
 echo "Сборка завершена!"
