@@ -2005,31 +2005,74 @@ void run_command(char* line) {
 }
 
 /* Memory dump command */
+// Предполагается, что inb уже определена как static inline
+
+unsigned char get_key() {
+    while (!(inb(0x64) & 0x01)); // Wait for data
+    return inb(0x60); // Read scan code
+}
+
 void memory_command() {
-    prints("Memory Dump (0x1000 - 0x10FF):\n");
-    for (u32 addr = 0x1000; addr < 0x1100; addr += 16) {
-        char addr_str[10];
-        itoa(addr, addr_str, 16);
-        prints("0x");
-        for (int i = strlen(addr_str); i < 4; i++) prints("0");
-        prints(addr_str);
-        prints(": ");
-        
-        for (int i = 0; i < 16; i++) {
-            unsigned char val = *(unsigned char*)(addr + i);
-            char val_str[3];
-            itoa(val, val_str, 16);
-            if (val < 0x10) prints("0");
-            prints(val_str);
-            prints(" ");
+    unsigned int start_addr = 0x1000;
+    unsigned int end_addr = 0x2000;
+    unsigned int current_addr = start_addr;
+    int lines_per_page = 20;
+    int first_run = 1;
+    int needs_redraw = 1;
+
+    while (1) {
+        if (needs_redraw) {
+            if (first_run) {
+                prints("\033[2J\033[H"); // Очистка и заголовок только при первом запуске
+                prints("Memory Dump (PgUp/PgDn to scroll, Esc to exit):\n");
+                first_run = 0;
+            } else {
+                prints("\033[H"); // Перемещение курсора в начало без очистки
+            }
+
+            for (int i = 0; i < lines_per_page && current_addr < end_addr; i++, current_addr += 16) {
+                char addr_str[10];
+                itoa(current_addr, addr_str, 16);
+                prints("0x");
+                for (int j = strlen(addr_str); j < 4; j++) prints("0");
+                prints(addr_str);
+                prints(": ");
+
+                for (int j = 0; j < 16; j++) {
+                    unsigned char val = *(unsigned char*)(current_addr + j);
+                    if ((unsigned int)(current_addr + j) < end_addr) {
+                        char val_str[3];
+                        itoa(val, val_str, 16);
+                        if (val < 0x10) prints("0");
+                        prints(val_str);
+                        prints(" ");
+                    }
+                }
+                prints(" |");
+
+                for (int j = 0; j < 16; j++) {
+                    unsigned char val = *(unsigned char*)(current_addr + j);
+                    if ((unsigned int)(current_addr + j) < end_addr) {
+                        if (val >= 32 && val <= 126) putchar(val);
+                        else putchar('.');
+                    }
+                }
+                prints("|\n");
+            }
+            needs_redraw = 0; // Сброс флага после отрисовки
         }
-        prints(" |");
-        for (int i = 0; i < 16; i++) {
-            unsigned char val = *(unsigned char*)(addr + i);
-            if (val >= 32 && val <= 126) putchar(val);
-            else putchar('.');
+
+        unsigned char key = get_key();
+        if (key == 0x01) break; // Esc
+        if (key == 0x49 && current_addr > start_addr) { // PgUp
+            current_addr -= lines_per_page * 16;
+            if (current_addr < start_addr) current_addr = start_addr;
+            needs_redraw = 1; // Требуется перерисовка
         }
-        prints("|\n");
+        if (key == 0x51 && current_addr + lines_per_page * 16 <= end_addr) { // PgDn
+            current_addr += lines_per_page * 16;
+            needs_redraw = 1; // Требуется перерисовка
+        }
     }
 }
 
