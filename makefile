@@ -18,4 +18,5 @@ iso/SystemRoot: systemroot
 
 # 5. Собираем ISO с помощью grub-mkrescue
 iso: iso/boot/kernel.bin iso/SystemRoot
-	grub-mkrescue -o bin/wexos.iso iso
+	grub-mkrescue -d /usr/lib/grub/i386-pc -o wexos.iso iso
+
