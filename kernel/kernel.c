@@ -1126,8 +1126,8 @@ void coreview_command(void) {
 
 /* OS version command */
 void osver_command() {
-    prints("OS Version: WexOS TinyShell v0.6\n");
-    prints("Build Date: 2025-09-16\n");
+    prints("OS Version: WexOS TinyShell v0.7 - Data protection\n");
+    prints("Build Date: 2025-09-18\n");
 }
 
 /* Date command without network */
@@ -2173,7 +2173,7 @@ void _start() {
     // --- Проверка пароля при загрузке ---
     check_login();
 
-    prints("WexOS TinyShell v0.6\n");
+    prints("WexOS TinyShell v0.7 - Data protection\n");
     prints("Type 'help' for commands\n\n");
 
     char cmd_buf[128];
