@@ -23,8 +23,12 @@ typedef struct {
 
 /* Function prototypes */
 void itoa(int value, char* str, int base);
+
 void coreview_command(void);
 void putchar(char ch);
+char keyboard_getchar();
+unsigned int simple_hash(const char* str);
+int check_login();
 void memcpy(void* dst, void* src, int len);
 int strcmp(const char* a, const char* b);
 int strlen(const char* s);
@@ -624,6 +628,32 @@ void fs_size(const char* name) {
     prints(" Bytes\n");
 }
 
+int check_login() {
+    FSNode* passfile = fs_find_file("SystemRoot/config/pass.cfg");
+    if (!passfile || passfile->size == 0) {
+        // Пароль не установлен
+        return 1;
+    }
+
+    char buffer[64];
+    while (1) {
+        prints("Enter password: ");
+        int len = 0;
+        char c;
+        while ((c = keyboard_getchar()) != '\n' && len < 63) {
+            buffer[len++] = c;
+        }
+        buffer[len] = '\0';
+        newline();
+
+        if (strcmp(buffer, passfile->content) == 0) {
+            prints("Login successful!\n");
+            return 1;
+        } else {
+            prints("Incorrect password, try again.\n");
+        }
+    }
+}
 
 /* String functions */
 void memcpy(void* dst, void* src, int len) {
@@ -1240,15 +1270,49 @@ SystemConfig temp_config;
 void install_disk() {
     prints("\nWARNING: ALL DISKS INCLUDING BOOT DISKS WILL BE FORMATTED TO WexFS FOR OS INSTALLATION.\n");
     prints("CONTINUE? Y/N: ");
-    
+
     char confirm = keyboard_getchar();
     putchar(confirm);
     newline();
 
+    char password[64] = {0};
     if (confirm == 'Y' || confirm == 'y') {
+        prints("Do you want to set a password for your user? Y/N: ");
+        char pass_confirm = keyboard_getchar();
+        putchar(pass_confirm);
+        newline();
+
+        if (pass_confirm == 'Y' || pass_confirm == 'y') {
+            while (1) {
+                prints("Enter the password: ");
+                int len = 0;
+                char c;
+                while ((c = keyboard_getchar()) != '\n' && len < 63) {
+                    password[len++] = c;
+                }
+                password[len] = '\0';
+                newline();
+
+                prints("Enter the password again: ");
+                char verify[64];
+                len = 0;
+                while ((c = keyboard_getchar()) != '\n' && len < 63) {
+                    verify[len++] = c;
+                }
+                verify[len] = '\0';
+                newline();
+
+                if (strcmp(password, verify) == 0) {
+                    prints("Password set successfully!\n");
+                    break;
+                } else {
+                    prints("Passwords do not match. Try again.\n");
+                }
+            }
+        }
+
         prints("Formatting disks to WexFS...\n");
         fs_init();
-
         prints("Removing old system directories if they exist...\n");
         fs_rm("home");
         fs_rm("SystemRoot");
@@ -1264,28 +1328,41 @@ void install_disk() {
         fs_mkdir("SystemRoot");
         fs_mkdir("SystemRoot/bin");
         fs_mkdir("SystemRoot/logs");
-		fs_mkdir("SystemRoot/drivers");
-		fs_mkdir("SystemRoot/kerneldrivers");
-		
+        fs_mkdir("SystemRoot/drivers");
+        fs_mkdir("SystemRoot/kerneldrivers");
+
         prints("Copying system files...\n");
         fs_touch("SystemRoot/bin/taskmgr.bin");
         fs_touch("SystemRoot/bin/kernel.bin");
         fs_touch("SystemRoot/bin/calc.bin");
         fs_touch("SystemRoot/logs/config.cfg");
-		fs_touch("SystemRoot/drivers/keyboard.sys");
-		fs_touch("SystemRoot/drivers/mouse.sys");
-		fs_touch("SystemRoot/drivers/vga.sys");
-		fs_touch("SystemRoot/kerneldrivers/kernel.sys");
-		fs_touch("SystemRoot/kerneldrivers/ntrsys.sys");
+        fs_touch("SystemRoot/drivers/keyboard.sys");
+        fs_touch("SystemRoot/drivers/mouse.sys");
+        fs_touch("SystemRoot/drivers/vga.sys");
+        fs_touch("SystemRoot/kerneldrivers/kernel.sys");
+        fs_touch("SystemRoot/kerneldrivers/ntrsys.sys");
+
+        // Запись пароля в pass.cfg, если он задан
+        if (password[0] != '\0') {
+            fs_touch("SystemRoot/config/pass.cfg");
+            FSNode* passfile = fs_find_file("SystemRoot/config/pass.cfg");
+            if (passfile) {
+                strcpy(passfile->content, password);
+                passfile->size = strlen(password);
+                fs_mark_dirty();
+                fs_save_to_disk();
+            }
+        }
 
         prints("Installation completed successfully!\n");
         prints("Please reboot to start the installed system.\n");
-
-        fs_save_to_disk();
     } else {
         prints("Installation cancelled.\n");
     }
 }
+
+
+
 
 /* String input function */
 void get_input(char* buffer, int max_len, int row, int col, int field_len) {
@@ -2089,78 +2166,81 @@ void memory_command() {
 void _start() {
     text_color = 0x07;
     clear_screen();
-    
+
     init_processes();
     fs_init();
-    
+
+    // --- Проверка пароля при загрузке ---
+    check_login();
+
     prints("WexOS TinyShell v0.6\n");
     prints("Type 'help' for commands\n\n");
-    
+
     char cmd_buf[128];
     int cmd_idx = 0;
     int history_pos = -1;
-    
-    while(1) {
+
+    while (1) {
         prints("> ");
-        
-        while(1) {
+
+        while (1) {
             cursor_row = cursor_row;
             cursor_col = cursor_col;
-            
+
             char c = getch_with_arrows();
-            
-            if(c == '\n') {
+
+            if (c == '\n') {
                 cmd_buf[cmd_idx] = '\0';
                 newline();
                 run_command(cmd_buf);
                 cmd_idx = 0;
                 history_pos = -1;
                 break;
-            } else if(c == '\b') {
-                if(cmd_idx > 0) {
+            } else if (c == '\b') {
+                if (cmd_idx > 0) {
                     cmd_idx--;
                     cmd_buf[cmd_idx] = '\0';
                     cursor_col--;
                     putchar(' ');
                     cursor_col--;
                 }
-            } else if(c == 'U') {
-                if(history_pos < history_count - 1) {
+            } else if (c == 'U') { // стрелка вверх
+                if (history_pos < history_count - 1) {
                     history_pos++;
                     strcpy(cmd_buf, command_history[history_count - 1 - history_pos]);
                     cmd_idx = strlen(cmd_buf);
-                    
+
                     cursor_row = cursor_row;
                     cursor_col = cursor_col - (cmd_idx + 2);
-                    for(int i = 0; i < COLS; i++) putchar(' ');
+                    for (int i = 0; i < COLS; i++) putchar(' ');
                     cursor_col = cursor_col - (cmd_idx + 2);
                     prints("> ");
                     prints(cmd_buf);
                 }
-            } else if(c == 'D') {
-                if(history_pos > 0) {
+            } else if (c == 'D') { // стрелка вниз
+                if (history_pos > 0) {
                     history_pos--;
                     strcpy(cmd_buf, command_history[history_count - 1 - history_pos]);
                     cmd_idx = strlen(cmd_buf);
-                    
+
                     cursor_row = cursor_row;
                     cursor_col = cursor_col - (cmd_idx + 2);
-                    for(int i = 0; i < COLS; i++) putchar(' ');
+                    for (int i = 0; i < COLS; i++) putchar(' ');
                     cursor_col = cursor_col - (cmd_idx + 2);
                     prints("> ");
                     prints(cmd_buf);
-                } else if(history_pos == 0) {
+                } else if (history_pos == 0) {
                     history_pos = -1;
                     cmd_idx = 0;
                     cmd_buf[0] = '\0';
-                    
+
                     cursor_row = cursor_row;
                     cursor_col = cursor_col - (cmd_idx + 2);
-                    for(int i = 0; i < COLS; i++) putchar(' ');
+                    for (int i = 0; i < COLS; i++) putchar(' ');
                     cursor_col = cursor_col - (cmd_idx + 2);
                     prints("> ");
                 }
-            } else if(c >= 32 && c <= 126 && cmd_idx < 127) {
+            } else if (c >= 32 && c <= 126 && cmd_idx < 127) {
                 cmd_buf[cmd_idx] = c;
                 cmd_idx++;
                 cmd_buf[cmd_idx] = '\0';
