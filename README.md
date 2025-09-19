@@ -20,17 +20,5 @@ WexOS - это самодельная операционная система д
 - GRUB (загрузчик)
 - QEMU или VirtualBox
 
-<details> <summary>Сборка</summary>
-gcc -m32 -ffreestanding -fno-pie -O2 -c kernel/kernel.c -o bin/kernel.o
-  
-ld -m elf_i386 -T boot/linker.ld -o bin/kernel.bin bin/kernel.o -e _start
-
-cp bin/kernel.bin iso/boot/
-
-cp -r systemroot iso/SystemRoot
-
-grub-mkrescue -d /usr/lib/grub/i386-pc -o wexos.iso iso
-
-</details>
 
 
