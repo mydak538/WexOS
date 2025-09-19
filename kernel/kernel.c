@@ -2462,7 +2462,7 @@ void _start() {
     int history_pos = -1;
 
     while (1) {
-        prints("> ");
+        prints("SystemRoot> ");
 
         while (1) {
             cursor_row = cursor_row;
@@ -2495,7 +2495,7 @@ void _start() {
                     cursor_col = cursor_col - (cmd_idx + 2);
                     for (int i = 0; i < COLS; i++) putchar(' ');
                     cursor_col = cursor_col - (cmd_idx + 2);
-                    prints("> ");
+                    prints("SystemRoot> ");
                     prints(cmd_buf);
                 }
             } else if (c == 'D') { // стрелка вниз
@@ -2508,7 +2508,7 @@ void _start() {
                     cursor_col = cursor_col - (cmd_idx + 2);
                     for (int i = 0; i < COLS; i++) putchar(' ');
                     cursor_col = cursor_col - (cmd_idx + 2);
-                    prints("> ");
+                    prints("SystemRoot> ");
                     prints(cmd_buf);
                 } else if (history_pos == 0) {
                     history_pos = -1;
