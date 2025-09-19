@@ -57,6 +57,10 @@ void fs_cd(const char* name);
 FSNode* fs_find_file(const char* name);
 void fs_copy(const char* src_name, const char* dest_name);
 void fs_size(const char* name);
+void fs_format(void);
+void fs_check_integrity(void);
+void fsck_command(void);
+void fs_cat(const char* filename);
 
 /* Multiboot header */
 typedef struct {
@@ -628,6 +632,215 @@ void fs_size(const char* name) {
     prints(" Bytes\n");
 }
 
+void fs_format(void) {
+    prints("WARNING: This will erase ALL files and directories!\n");
+    prints("Are you sure you want to continue? (y/N): ");
+    
+    char confirm = keyboard_getchar();
+    putchar(confirm);
+    newline();
+    
+    if (confirm == 'y' || confirm == 'Y') {
+        prints("Formatting filesystem...\n");
+        
+        // Сбрасываем файловую систему к начальному состоянию
+        fs_count = 1;
+        strcpy(fs_cache[0].name, "/");
+        fs_cache[0].is_dir = 1;
+        fs_cache[0].content[0] = '\0';
+        fs_cache[0].next_sector = 0;
+        fs_cache[0].size = 0;
+        
+        // Сбрасываем текущую директорию
+        strcpy(current_dir, "/");
+        
+        // Помечаем как измененную и сохраняем
+        fs_mark_dirty();
+        fs_save_to_disk();
+        
+        prints("Filesystem formatted successfully.\n");
+    } else {
+        prints("Format cancelled.\n");
+    }
+}
+
+
+/* Function implementations */
+void fs_check_integrity(void) {
+    prints("Checking filesystem integrity...\n");
+    prints("Filesystem: WexFS\n");
+    prints("Version: 1.0\n");
+    prints("======================================\n");
+    
+    int errors_found = 0;
+    int warnings_found = 0;
+    
+    // 1. Проверка базовой целостности
+    prints("Phase 1: Checking inodes...\n");
+    for (int i = 0; i < fs_count; i++) {
+        // Проверка валидности имен
+        if (strlen(fs_cache[i].name) == 0) {
+            prints("ERROR: Empty filename at index ");
+            char idx_str[10];
+            itoa(i, idx_str, 10);
+            prints(idx_str);
+            newline();
+            errors_found++;
+        }
+        
+        if (fs_cache[i].name[0] != '/') {
+            prints("ERROR: Filename doesn't start with '/': ");
+            prints(fs_cache[i].name);
+            newline();
+            errors_found++;
+        }
+    }
+    
+    // 2. Проверка на дубликаты
+    prints("Phase 2: Checking for duplicates...\n");
+    for (int i = 0; i < fs_count; i++) {
+        for (int j = i + 1; j < fs_count; j++) {
+            if (strcmp(fs_cache[i].name, fs_cache[j].name) == 0) {
+                prints("ERROR: Duplicate filename: ");
+                prints(fs_cache[i].name);
+                newline();
+                errors_found++;
+            }
+        }
+    }
+    
+    // 3. Проверка структуры директорий
+    prints("Phase 3: Checking directory tree...\n");
+    for (int i = 0; i < fs_count; i++) {
+        if (strcmp(fs_cache[i].name, "/") != 0) {
+            char parent_path[MAX_PATH];
+            strcpy(parent_path, fs_cache[i].name);
+            
+            // Находим последний слэш
+            char* last_slash = strrchr(parent_path, '/');
+            if (last_slash) {
+                *last_slash = '\0';
+                if (strlen(parent_path) == 0) {
+                    strcpy(parent_path, "/");
+                }
+                
+                // Проверяем существует ли родительская директория
+                int parent_found = 0;
+                for (int j = 0; j < fs_count; j++) {
+                    if (strcmp(fs_cache[j].name, parent_path) == 0 && fs_cache[j].is_dir) {
+                        parent_found = 1;
+                        break;
+                    }
+                }
+                
+                if (!parent_found) {
+                    prints("ERROR: Orphaned file/directory - parent not found: ");
+                    prints(fs_cache[i].name);
+                    newline();
+                    errors_found++;
+                }
+            }
+        }
+    }
+    
+    // 4. Проверка размера контента
+    prints("Phase 4: Checking file sizes...\n");
+    for (int i = 0; i < fs_count; i++) {
+        if (!fs_cache[i].is_dir) {
+            if (fs_cache[i].size > sizeof(fs_cache[i].content)) {
+                prints("WARNING: File size exceeds content buffer: ");
+                prints(fs_cache[i].name);
+                newline();
+                warnings_found++;
+            }
+            
+            if (strlen(fs_cache[i].content) != fs_cache[i].size) {
+                prints("WARNING: Content length doesn't match size field: ");
+                prints(fs_cache[i].name);
+                newline();
+                warnings_found++;
+            }
+        }
+    }
+    
+    // 5. Проверка максимального количества файлов
+    prints("Phase 5: Checking filesystem limits...\n");
+    if (fs_count >= MAX_FILES) {
+        prints("WARNING: Filesystem at maximum capacity (");
+        char max_str[10];
+        itoa(MAX_FILES, max_str, 10);
+        prints(max_str);
+        prints(" files)\n");
+        warnings_found++;
+    }
+    
+    // 6. Статистика
+    prints("Phase 6: Generating statistics...\n");
+    int total_files = 0;
+    int total_dirs = 0;
+    
+    for (int i = 0; i < fs_count; i++) {
+        if (fs_cache[i].is_dir) {
+            total_dirs++;
+        } else {
+            total_files++;
+        }
+    }
+    
+    prints("======================================\n");
+    prints("Filesystem check completed.\n");
+    
+    char buf[20];
+    itoa(total_files, buf, 10);
+    prints("Files: "); prints(buf); newline();
+    itoa(total_dirs, buf, 10);
+    prints("Directories: "); prints(buf); newline();
+    itoa(fs_count, buf, 10);
+    prints("Total objects: "); prints(buf); newline();
+    itoa(MAX_FILES - fs_count, buf, 10);
+    prints("Free slots: "); prints(buf); newline();
+    
+    if (errors_found > 0) {
+        itoa(errors_found, buf, 10);
+        prints("Errors found: "); prints(buf); newline();
+        prints("Run 'format' to fix filesystem errors.\n");
+    } else {
+        prints("No errors found.\n");
+    }
+    
+    if (warnings_found > 0) {
+        itoa(warnings_found, buf, 10);
+        prints("Warnings: "); prints(buf); newline();
+    }
+    
+    prints("Filesystem is ");
+    if (errors_found == 0) {
+        prints("OK");
+    } else {
+        prints("CORRUPTED");
+    }
+    prints(".\n");
+}
+
+void fsck_command(void) {
+    prints("Filesystem Consistency Check\n");
+    prints("============================\n");
+    prints("This utility will check WexFS filesystem for errors\n");
+    prints("and report any inconsistencies.\n\n");
+    
+    prints("Continue? (y/N): ");
+    
+    char confirm = keyboard_getchar();
+    putchar(confirm);
+    newline();
+    
+    if (confirm == 'y' || confirm == 'Y') {
+        fs_check_integrity();
+    } else {
+        prints("Operation cancelled.\n");
+    }
+}
+
 int check_login() {
     FSNode* passfile = fs_find_file("SystemRoot/config/pass.cfg");
     if (!passfile || passfile->size == 0) {
@@ -652,6 +865,40 @@ int check_login() {
         } else {
             prints("Incorrect password, try again.\n");
         }
+    }
+}
+
+/* Function prototypes */
+void fs_cat(const char* filename);
+
+/* Function implementation */
+void fs_cat(const char* filename) {
+    if (filename == NULL || strlen(filename) == 0) {
+        prints("Usage: cat <filename>\n");
+        return;
+    }
+
+    FSNode* file = fs_find_file(filename);
+    if (!file) {
+        prints("Error: File not found: ");
+        prints(filename);
+        newline();
+        return;
+    }
+
+    if (file->is_dir) {
+        prints("Error: '");
+        prints(filename);
+        prints("' is a directory\n");
+        return;
+    }
+
+    // Выводим содержимое файла
+    if (file->size > 0) {
+        prints(file->content);
+        newline();
+    } else {
+        prints("File is empty\n");
     }
 }
 
@@ -1126,8 +1373,13 @@ void coreview_command(void) {
 
 /* OS version command */
 void osver_command() {
-    prints("OS Version: WexOS TinyShell v0.7 - Data protection\n");
-    prints("Build Date: 2025-09-18\n");
+    prints("OS Version: WexOS TinyShell v0.8 - Update FileSystem\n");
+	prints("Added:\n");
+	prints("Commands Cat,fsck,format.\n");
+	prints("Changed:\n");
+	prints("Command help\n");
+	
+    prints("Build Date: 2025-09-19\n");
 }
 
 /* Date command without network */
@@ -1966,45 +2218,48 @@ void show_help() {
     unsigned char old_color = text_color;
     text_color = 0x0A;
     
-    const char* help_lines[] = {
-        "Available commands:",
-        "  help     - Show this help message",
-        "  echo     - Echo text to screen",
-        "  reboot   - Reboot the system",
-        "  shutdown - Shutdown the system",
-        "  clear    - Clear the screen",
-        "  ls       - List files in current directory",
-        "  cd       - Change directory",
-        "  mkdir    - Create directory",
-        "  rm       - Remove file/directory",
-        "  touch    - Create empty file",
-        "  copy     - Copy file (copy src dest)",
-        "  writer   - Edit file content",
-        "  ps       - List processes",
-        "  kill     - Kill process",
-        "  coreview - Show CPU core registers",
-        "  color    - Set text color (0-7)",
-        "  colorf   - Set foreground color (0-7)",
-        "  install  - Install system (0=virtual, 1=disk)",
-        "  config   - System configuration menu",
-		"  memory   - Memory dump",
-        "  cpu      - Show CPU information",
-        "  date     - Show date without network",
-		"  watch    - A watch with an easy interface",
-        "  biosver  - Show BIOS version",
-        "  calc     - Calculator (calc expression)",
-        "  time     - Show time without network",
-        "  size     - Show file size in Bytes",
-        "  osver    - Show OS version",
-        "  history  - Show command history",
-        NULL
+    const char* commands[] = {
+        "help",     "echo",     "reboot",   "shutdown", "clear",
+        "ls",       "cd",       "mkdir",    "rm",       "touch",
+        "copy",     "writer",   "ps",       "kill",     "coreview",
+        "color",    "colorf",   "install",  "config",   "memory",
+        "cpu",      "date",     "watch",    "biosver",  "calc",
+        "time",     "size",     "osver",    "history",  "format",
+        "fsck",     "cat",  NULL
     };
     
-    for (int i = 0; help_lines[i] != NULL; i++) {
-        prints(help_lines[i]);
-        newline();
-        for (volatile int d = 0; d < 1000000; d++);
+    prints("Available commands:\n");
+    prints("==================\n\n");
+    
+    int total_commands = 0;
+    while (commands[total_commands] != NULL) {
+        total_commands++;
     }
+    
+    int commands_per_column = (total_commands + 1) / 2;
+    int col_width = 15;
+    
+    for (int i = 0; i < commands_per_column; i++) {
+        // Левый столбец
+        cursor_col = 2;
+        prints(commands[i]);
+        
+        // Выравнивание левого столбца
+        int spaces = col_width - strlen(commands[i]);
+        for (int s = 0; s < spaces; s++) {
+            putchar(' ');
+        }
+        
+        // Правый столбец (если есть)
+        if (i + commands_per_column < total_commands) {
+            prints(commands[i + commands_per_column]);
+        }
+        
+        newline();
+    }
+    
+    newline();
+    prints("These are all commands.\n");
     
     text_color = old_color;
 }
@@ -2068,10 +2323,17 @@ void run_command(char* line) {
 	else if(strcasecmp(line, "memory") == 0) memory_command();
 	else if(strcasecmp(line, "install") == 0) install_disk();
     else if(strcasecmp(line, "ls") == 0) fs_ls();
+	else if(strcasecmp(line, "format") == 0) fs_format();
+	else if(strcasecmp(line, "fsck") == 0) fsck_command();
     else if(strcasecmp(line, "cd") == 0) { while(*p == ' ') p++; if(*p) fs_cd(p); else prints("Usage: cd <directory>\n"); }
     else if(strcasecmp(line, "mkdir") == 0) { while(*p == ' ') p++; if(*p) fs_mkdir(p); else prints("Usage: mkdir <name>\n"); }
     else if(strcasecmp(line, "touch") == 0) { while(*p == ' ') p++; if(*p) fs_touch(p); else prints("Usage: touch <name>\n"); }
     else if(strcasecmp(line, "rm") == 0) { while(*p == ' ') p++; if(*p) fs_rm(p); else prints("Usage: rm <name>\n"); }
+	else if(strcasecmp(line, "cat") == 0) { 
+    while(*p == ' ') p++; 
+	if(*p) fs_cat(p); 
+    else prints("Usage: cat <filename>\n"); 
+    }
     else if(strcasecmp(line, "copy") == 0) {
         while(*p == ' ') p++;
         if(*p) {
@@ -2192,7 +2454,7 @@ void _start() {
     // --- Проверка пароля при загрузке ---
     check_login();
 
-    prints("WexOS TinyShell v0.7 - Data protection\n");
+    prints("WexOS TinyShell v0.8 - Update FileSystem\n");
     prints("Type 'help' for commands\n\n");
 
     char cmd_buf[128];
