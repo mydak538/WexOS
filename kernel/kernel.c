@@ -1316,6 +1316,8 @@ void install_disk() {
         prints("Removing old system directories if they exist...\n");
         fs_rm("home");
         fs_rm("SystemRoot");
+		fs_rm("filesystem");
+		fs_rm("boot");
 
         prints("Creating system directories...\n");
         fs_mkdir("home");
@@ -1325,11 +1327,16 @@ void install_disk() {
         fs_mkdir("home/user/desktop/MyComputer");
         fs_mkdir("home/user/documents");
         fs_mkdir("home/user/downloads");
+		fs_mkdir("boot");
+		fs_mkdir("boot/Legacy");
+		fs_mkdir("boot/UEFI");
         fs_mkdir("SystemRoot");
         fs_mkdir("SystemRoot/bin");
         fs_mkdir("SystemRoot/logs");
         fs_mkdir("SystemRoot/drivers");
         fs_mkdir("SystemRoot/kerneldrivers");
+		fs_mkdir("filesystem");
+		fs_mkdir("filesystem/WexFs");
 
         prints("Copying system files...\n");
         fs_touch("SystemRoot/bin/taskmgr.bin");
@@ -1341,6 +1348,18 @@ void install_disk() {
         fs_touch("SystemRoot/drivers/vga.sys");
         fs_touch("SystemRoot/kerneldrivers/kernel.sys");
         fs_touch("SystemRoot/kerneldrivers/ntrsys.sys");
+		prints("Copying boot files...\n");
+		fs_touch("boot/uefi/grub.cfg");
+		fs_touch("boot/Legacy/MBR.BIN");
+		fs_touch("boot/Legacy/signature.cfg");
+		prints("Copying filesystem files...\n");
+		fs_touch("filesystem/WexFs/touch.bin");
+		fs_touch("filesystem/WexFs/mkdir.bin");
+		fs_touch("filesystem/WexFs/size.bin");
+		fs_touch("filesystem/WexFs/cd.bin");
+		fs_touch("filesystem/WexFs/ls.bin");
+		fs_touch("filesystem/WexFs/copy.bin");
+		fs_touch("filesystem/WexFs/rm.bin");
 
         // Запись пароля в pass.cfg, если он задан
         if (password[0] != '\0') {
