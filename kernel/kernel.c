@@ -1,3 +1,5 @@
+#include <stdint.h>
+
 #define MULTIBOOT_MAGIC 0x1BADB002
 #define MULTIBOOT_FLAGS 0
 
@@ -13,6 +15,21 @@ typedef unsigned char u8;
 #define MAX_FILES 64
 #define MAX_HISTORY 10
 
+#define SCREEN_WIDTH 800
+#define SCREEN_HEIGHT 600
+#define CURSOR_SPEED 5
+
+#define DARK_BLUE 0x00008B
+#define LIGHT_GRAY 0xC0C0C0
+#define BLACK 0x000000
+#define WHITE 0xFFFFFF
+
+#define KEY_UP    0x48
+#define KEY_DOWN  0x50
+#define KEY_LEFT  0x4B
+#define KEY_RIGHT 0x4D
+#define KEY_ENTER 0x1C
+
 typedef struct { 
     char name[MAX_PATH];
     int is_dir; 
@@ -27,8 +44,14 @@ void itoa(int value, char* str, int base);
 void coreview_command(void);
 void putchar(char ch);
 char keyboard_getchar();
-unsigned int simple_hash(const char* str);
 int check_login();
+void fill_screen(int color);
+void draw_rect(int x, int y, int w, int h, int color);
+void draw_text(int x, int y, char* text, int color);
+void draw_cursor(int x, int y);            
+unsigned char get_key(); // возвращает сканкод нажатой клавиши (PS/2)               
+void get_datetime(char *buffer); 
+void open_terminal();
 void memcpy(void* dst, void* src, int len);
 int strcmp(const char* a, const char* b);
 int strlen(const char* s);
@@ -1131,6 +1154,45 @@ void time_command() {
     newline();
 }
 
+/* Get datetime for desktop */
+void get_datetime(char *buffer) {
+    // Ждем завершения обновления RTC
+    while (1) {
+        outb(0x70, 0x0A);
+        if (!(inb(0x71) & 0x80)) break;
+    }
+
+    // Читаем значения из CMOS
+    unsigned char second = rtc_read(0x00);
+    unsigned char minute = rtc_read(0x02);
+    unsigned char hour   = rtc_read(0x04);
+    unsigned char day    = rtc_read(0x07);
+    unsigned char month  = rtc_read(0x08);
+    unsigned char year   = rtc_read(0x09);
+
+    // Конвертируем из BCD в binary
+    second = bcd_to_bin(second);
+    minute = bcd_to_bin(minute);
+    hour   = bcd_to_bin(hour);
+    day    = bcd_to_bin(day);
+    month  = bcd_to_bin(month);
+    year   = bcd_to_bin(year);
+
+    // Форматируем в строку DD.MM.YY HH:MM:SS
+    buffer[0] = '0' + (day / 10);    buffer[1] = '0' + (day % 10);
+    buffer[2] = '.';
+    buffer[3] = '0' + (month / 10);  buffer[4] = '0' + (month % 10);
+    buffer[5] = '.';
+    buffer[6] = '0' + (year / 10);   buffer[7] = '0' + (year % 10);
+    buffer[8] = ' ';
+    buffer[9] = '0' + (hour / 10);   buffer[10] = '0' + (hour % 10);
+    buffer[11] = ':';
+    buffer[12] = '0' + (minute / 10); buffer[13] = '0' + (minute % 10);
+    buffer[14] = ':';
+    buffer[15] = '0' + (second / 10); buffer[16] = '0' + (second % 10);
+    buffer[17] = '\0';
+}
+
 /* Keyboard input */
 static unsigned char shift_pressed = 0;
 
@@ -1304,6 +1366,139 @@ void kill_command(const char* arg) {
         }
     }
 }
+
+
+void cmd_desktop() {
+    // Сохраняем старый цвет текста
+    unsigned char old_color = text_color;
+
+    // Устанавливаем цвет для рабочего стола (темно-синий фон, белый текст)
+    text_color = 0x1F; // Синий фон, белый текст (атрибут VGA)
+
+    clear_screen();
+
+    // ------ Отрисовка статичного интерфейса рабочего стола ------
+    // Верхняя панель (1 строка)
+    for (int c = 0; c < COLS; c++) {
+        VGA[0 * COLS + c] = (unsigned short)(' ' | (0x70 << 8)); // Серый
+    }
+    
+
+  for (int r = 2; r < 5; r++) {
+        for (int c = COLS-5; c < COLS-2; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (0x00 << 8)); // Черный
+        }
+    }
+    cursor_row = 3; cursor_col = COLS-4;
+    text_color = 0x0F; // Черный фон, белый текст
+    putchar('T');
+
+    // Подпись "Recycle bin" под корзиной
+    cursor_row = 5; cursor_col = COLS-12;
+    text_color = 0x70; // Серый фон, черный текст
+    prints("Terminal");
+	
+    // ------ Основной цикл рабочего стола ------
+    int cursor_x = COLS / 2;
+    int cursor_y = ROWS / 2;
+    int exit_desktop = 0;
+
+    while (!exit_desktop) {
+        // ------ Обновление времени на верхней панели ------
+        char datetime[18];
+        get_datetime(datetime);
+
+        // Очищаем область времени (центр верхней панели)
+        cursor_row = 0; cursor_col = (COLS - 17) / 2;
+        text_color = 0x70;
+        for (int i = 0; i < 17; i++) {
+            putchar(' ');
+        }
+
+        // Выводим реальное время
+        cursor_row = 0; cursor_col = (COLS - 17) / 2;
+        prints(datetime);
+
+        // ------ Отрисовка курсора ------
+        cursor_row = cursor_y;
+        cursor_col = cursor_x;
+        text_color = 0x4F; // Красный фон, белый текст для курсора
+        putchar('X'); // Символ курсора
+
+        // ------ Обработка ввода ------
+        // Проверяем наличие нажатия клавиши без блокировки
+        unsigned char st = inb(0x64);
+        if (st & 1) {
+            unsigned char sc = inb(0x60);
+            
+            // Обработка стрелочек (extended codes)
+            if (sc == 0xE0) {
+                // Ждем следующий код стрелки
+                while (!(inb(0x64) & 1));
+                sc = inb(0x60);
+                
+                // Стираем курсор перед перемещением
+                cursor_row = cursor_y;
+                cursor_col = cursor_x;
+                text_color = 0x1F;
+                putchar(' ');
+                
+                // Обработка перемещения
+                switch(sc) {
+                    case 0x48: if (cursor_y > 1) cursor_y--; break;     // Стрелка вверх
+                    case 0x50: if (cursor_y < ROWS-1) cursor_y++; break; // Стрелка вниз
+                    case 0x4B: if (cursor_x > 0) cursor_x--; break;     // Стрелка влево
+                    case 0x4D: if (cursor_x < COLS-1) cursor_x++; break; // Стрелка вправо
+                    case 0x1C: // Enter (extended)
+                        // Проверяем, нажали ли на кнопку T (терминал)
+                        if (cursor_y >= 2 && cursor_y <= 3 && cursor_x >= 2 && cursor_x <= 3) {
+                            text_color = old_color;
+                            clear_screen();
+                            prints("Launching terminal...\n");
+                            exit_desktop = 1;
+                        }
+                        // Проверяем, нажали ли на кнопку R (корзина)
+                        else if (cursor_y >= 2 && cursor_y <= 3 && cursor_x >= COLS-4 && cursor_x <= COLS-2) {
+                            text_color = old_color;
+                            clear_screen();
+                            prints("Opening Recycle Bin...\n");
+                            exit_desktop = 1;
+                        }
+                        break;
+                }
+            }
+            // Обработка обычного Enter и ESC
+            else if (sc == 0x1C) { // Enter
+                // Проверяем, нажали ли на кнопку T (терминал)
+                if (cursor_y >= 2 && cursor_y <= 3 && cursor_x >= 2 && cursor_x <= 3) {
+                    text_color = old_color;
+                    clear_screen();
+                    prints("Launching terminal...\n");
+                    exit_desktop = 1;
+                }
+                // Проверяем, нажали ли на кнопку R (корзина)
+                else if (cursor_y >= 2 && cursor_y <= 3 && cursor_x >= COLS-4 && cursor_x <= COLS-2) {
+                    text_color = old_color;
+                    clear_screen();
+                    prints("Opening Recycle Bin...\n");
+                    exit_desktop = 1;
+                }
+            }
+            else if (sc == 0x01) { // ESC
+                exit_desktop = 1;
+            }
+        }
+
+        // Небольшая задержка для плавности
+        for (volatile int i = 0; i < 10000; i++);
+    }
+
+    // Восстанавливаем цвет и очищаем экран
+    text_color = old_color;
+    clear_screen();
+    prints("Exited desktop.\n> ");
+}
+
 
 /* CPU information command */
 void cpu_command() {
@@ -2322,6 +2517,7 @@ void run_command(char* line) {
     else if(strcasecmp(line, "clear") == 0) clear_screen();
 	else if(strcasecmp(line, "memory") == 0) memory_command();
 	else if(strcasecmp(line, "install") == 0) install_disk();
+	else if(strcasecmp(line, "desktop") == 0) cmd_desktop();
     else if(strcasecmp(line, "ls") == 0) fs_ls();
 	else if(strcasecmp(line, "format") == 0) fs_format();
 	else if(strcasecmp(line, "fsck") == 0) fsck_command();
