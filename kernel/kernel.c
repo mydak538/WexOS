@@ -30,6 +30,29 @@ typedef unsigned char u8;
 #define KEY_RIGHT 0x4D
 #define KEY_ENTER 0x1C
 
+#define EXPLORER_WIDTH COLS
+#define EXPLORER_HEIGHT ROWS
+#define MAX_VISIBLE_FILES (ROWS - 4)
+#define PATH_MAX_DISPLAY 70
+
+
+typedef struct {
+    char name[MAX_NAME];
+    int is_dir;
+    u32 size;
+} FileEntry;
+
+typedef struct {
+    int x, y;
+    int width, height;
+    char title[MAX_NAME];
+    FileEntry files[MAX_FILES];
+    int file_count;
+    int selected_index;
+    int scroll_offset;
+    char current_path[MAX_PATH];
+} Explorer;
+
 typedef struct { 
     char name[MAX_PATH];
     int is_dir; 
@@ -84,6 +107,14 @@ void fs_format(void);
 void fs_check_integrity(void);
 void fsck_command(void);
 void fs_cat(const char* filename);
+void writer_command(const char* filename);
+void wexplorer_command(void);
+void draw_explorer(Explorer* exp);
+void explorer_navigate(Explorer* exp, const char* path);
+void explorer_refresh(Explorer* exp);
+int explorer_handle_input(Explorer* exp);
+void draw_file_list(Explorer* exp);
+void draw_status_bar(Explorer* exp);
 
 /* Multiboot header */
 typedef struct {
@@ -925,6 +956,459 @@ void fs_cat(const char* filename) {
     }
 }
 
+/* WexExplorer - файловый менеджер */
+void explorer_refresh(Explorer* exp) {
+    exp->file_count = 0;
+    exp->selected_index = 0;
+    exp->scroll_offset = 0;
+    
+    // Добавляем ".." для навигации вверх (кроме корня)
+    if (strcmp(exp->current_path, "/") != 0) {
+        strcpy(exp->files[exp->file_count].name, "..");
+        exp->files[exp->file_count].is_dir = 1;
+        exp->files[exp->file_count].size = 0;
+        exp->file_count++;
+    }
+    
+    // Временные массивы для сортировки
+    FileEntry folders[MAX_FILES];
+    FileEntry files[MAX_FILES];
+    int folder_count = 0;
+    int file_count = 0;
+    
+    // Сканируем файловую систему
+    for (int i = 0; i < fs_count; i++) {
+        int is_in_current_dir = 0;
+        char relative_path[MAX_NAME] = "";
+        
+        if (strcmp(exp->current_path, "/") == 0) {
+            // Корневая директория
+            if (fs_cache[i].name[0] == '/') {
+                char* second_slash = strchr(fs_cache[i].name + 1, '/');
+                if (second_slash == NULL) {
+                    is_in_current_dir = 1;
+                    strcpy(relative_path, fs_cache[i].name + 1);
+                }
+            } else {
+                is_in_current_dir = 1;
+                strcpy(relative_path, fs_cache[i].name);
+            }
+        } else {
+            // Поддиректории
+            char search_path[MAX_PATH];
+            strcpy(search_path, exp->current_path);
+            if (search_path[strlen(search_path)-1] != '/') {
+                strcat(search_path, "/");
+            }
+            
+            if (strstr(fs_cache[i].name, search_path) == fs_cache[i].name) {
+                char* name_part = fs_cache[i].name + strlen(search_path);
+                if (name_part[0] != '\0') {
+                    char* next_slash = strchr(name_part, '/');
+                    if (next_slash == NULL) {
+                        is_in_current_dir = 1;
+                        strcpy(relative_path, name_part);
+                    }
+                }
+            }
+        }
+        
+        if (is_in_current_dir && strlen(relative_path) > 0) {
+            int duplicate = 0;
+            for (int j = 0; j < exp->file_count; j++) {
+                if (strcmp(exp->files[j].name, relative_path) == 0) {
+                    duplicate = 1;
+                    break;
+                }
+            }
+            
+            if (!duplicate) {
+                if (fs_cache[i].is_dir) {
+                    strcpy(folders[folder_count].name, relative_path);
+                    folders[folder_count].is_dir = 1;
+                    folders[folder_count].size = fs_cache[i].size;
+                    folder_count++;
+                } else {
+                    strcpy(files[file_count].name, relative_path);
+                    files[file_count].is_dir = 0;
+                    files[file_count].size = fs_cache[i].size;
+                    file_count++;
+                }
+            }
+        }
+    }
+    
+    // Сортируем папки по алфавиту
+    for (int i = 0; i < folder_count - 1; i++) {
+        for (int j = i + 1; j < folder_count; j++) {
+            if (strcmp(folders[i].name, folders[j].name) > 0) {
+                FileEntry temp = folders[i];
+                folders[i] = folders[j];
+                folders[j] = temp;
+            }
+        }
+    }
+    
+    // Сортируем файлы по алфавиту
+    for (int i = 0; i < file_count - 1; i++) {
+        for (int j = i + 1; j < file_count; j++) {
+            if (strcmp(files[i].name, files[j].name) > 0) {
+                FileEntry temp = files[i];
+                files[i] = files[j];
+                files[j] = temp;
+            }
+        }
+    }
+    
+    // Объединяем: сначала папки, потом файлы
+    for (int i = 0; i < folder_count && exp->file_count < MAX_FILES; i++) {
+        exp->files[exp->file_count] = folders[i];
+        exp->file_count++;
+    }
+    
+    for (int i = 0; i < file_count && exp->file_count < MAX_FILES; i++) {
+        exp->files[exp->file_count] = files[i];
+        exp->file_count++;
+    }
+}
+
+void draw_file_list(Explorer* exp) {
+    int list_height = ROWS - 4;
+    int start_y = 2;
+    
+    for (int i = 0; i < list_height && i + exp->scroll_offset < exp->file_count; i++) {
+        int file_idx = i + exp->scroll_offset;
+        FileEntry* file = &exp->files[file_idx];
+        
+        cursor_row = start_y + i;
+        cursor_col = 2;
+        
+        // Выделение
+        if (file_idx == exp->selected_index) {
+            // Очищаем строку
+            for (int c = 0; c < COLS; c++) {
+                VGA[cursor_row * COLS + c] = (unsigned short)(' ' | (0x4F << 8));
+            }
+            text_color = 0x4F;
+        } else {
+            text_color = 0x1F;
+        }
+        
+        cursor_col = 2;
+        
+        // Иконка папки/файла
+        if (file->is_dir) {
+            prints("[+] ");
+        } else {
+            prints("    ");
+        }
+        
+        // Имя файла
+        char display_name[60];
+        strcpy(display_name, file->name);
+        if (strlen(display_name) > 50) {
+            display_name[47] = '.';
+            display_name[48] = '.';
+            display_name[49] = '.';
+            display_name[50] = '\0';
+        }
+        prints(display_name);
+        
+        // Размер
+        cursor_col = COLS - 25;
+        if (file->is_dir) {
+            prints("<DIR>");
+        } else {
+            char size_str[15];
+            itoa(file->size, size_str, 10);
+            prints(size_str);
+            prints(" bytes");
+        }
+        
+        // Тип
+        cursor_col = COLS - 10;
+        if (file->is_dir) {
+            prints("Folder");
+        } else {
+            char* dot = strrchr(file->name, '.');
+            if (dot && dot != file->name) {
+                char ext[10];
+                strcpy(ext, dot + 1);
+                if (strlen(ext) > 6) ext[6] = '\0';
+                prints(ext);
+            } else {
+                prints("File");
+            }
+        }
+    }
+}
+
+void draw_status_bar(Explorer* exp) {
+    // Статус бар
+    for (int c = 0; c < COLS; c++) {
+        VGA[(ROWS-2) * COLS + c] = (unsigned short)(' ' | (0x70 << 8));
+        VGA[(ROWS-1) * COLS + c] = (unsigned short)(' ' | (0x70 << 8));
+    }
+    
+    cursor_row = ROWS - 2;
+    cursor_col = 2;
+    text_color = 0x70;
+    
+    // Статистика
+    char stat_buf[100];
+    strcpy(stat_buf, "Total: ");
+    char count_str[10];
+    itoa(exp->file_count, count_str, 10);
+    strcat(stat_buf, count_str);
+    
+    // Подсчет папок и файлов
+    int dir_count = 0, file_count = 0;
+    for (int i = 0; i < exp->file_count; i++) {
+        if (exp->files[i].is_dir) dir_count++;
+        else file_count++;
+    }
+    
+    strcat(stat_buf, " (");
+    itoa(dir_count, count_str, 10);
+    strcat(stat_buf, count_str);
+    strcat(stat_buf, " folders, ");
+    itoa(file_count, count_str, 10);
+    strcat(stat_buf, count_str);
+    strcat(stat_buf, " files)");
+    
+    // Выбранный файл
+    if (exp->file_count > 0 && exp->selected_index < exp->file_count) {
+        strcat(stat_buf, " | Selected: ");
+        strcat(stat_buf, exp->files[exp->selected_index].name);
+    }
+    
+    prints(stat_buf);
+    
+    // Подсказки
+    cursor_row = ROWS - 1;
+    cursor_col = 2;
+    prints("Enter:Open  Up/Dn:Navigate  ESC:Exit  Home/End:Scroll");
+}
+
+void draw_explorer(Explorer* exp) {
+    unsigned char old_color = text_color;
+    
+    // Очищаем весь экран
+    for (int r = 0; r < ROWS; r++) {
+        for (int c = 0; c < COLS; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (0x1F << 8));
+        }
+    }
+    
+    // Верхняя панель
+    for (int c = 0; c < COLS; c++) {
+        VGA[0 * COLS + c] = (unsigned short)(' ' | (0x70 << 8));
+        VGA[1 * COLS + c] = (unsigned short)(' ' | (0x70 << 8));
+    }
+    
+    // Заголовок (обрезаем если слишком длинный)
+    char display_title[PATH_MAX_DISPLAY];
+    strcpy(display_title, "WexExplorer - ");
+    strcat(display_title, exp->current_path);
+    
+    if (strlen(display_title) > PATH_MAX_DISPLAY) {
+        strcpy(display_title, "WexExplorer - ...");
+        strcat(display_title, exp->current_path + strlen(exp->current_path) - (PATH_MAX_DISPLAY - 20));
+    }
+    
+    cursor_row = 0;
+    cursor_col = (COLS - strlen(display_title)) / 2;
+    text_color = 0x70;
+    prints(display_title);
+    
+    // Заголовки колонок
+    cursor_row = 1;
+    cursor_col = 2;
+    text_color = 0x70;
+    prints("Name");
+    cursor_col = COLS - 25;
+    prints("Size");
+    cursor_col = COLS - 10;
+    prints("Type");
+    
+    // Список файлов
+    draw_file_list(exp);
+    
+    // Статус бар
+    draw_status_bar(exp);
+    
+    text_color = old_color;
+}
+
+int explorer_handle_input(Explorer* exp) {
+    int list_height = ROWS - 4;
+    
+    while (1) {
+        unsigned char st = inb(0x64);
+        if (st & 1) {
+            unsigned char sc = inb(0x60);
+            
+            if (sc == 0xE0) {
+                // Extended key
+                while (!(inb(0x64) & 1));
+                sc = inb(0x60);
+                
+                switch (sc) {
+                    case 0x48: // Стрелка вверх
+                        if (exp->selected_index > 0) {
+                            exp->selected_index--;
+                            if (exp->selected_index < exp->scroll_offset) {
+                                exp->scroll_offset = exp->selected_index;
+                            }
+                            return 0; // Перерисовать
+                        }
+                        break;
+                        
+                    case 0x50: // Стрелка вниз
+                        if (exp->selected_index < exp->file_count - 1) {
+                            exp->selected_index++;
+                            if (exp->selected_index >= exp->scroll_offset + list_height) {
+                                exp->scroll_offset = exp->selected_index - list_height + 1;
+                            }
+                            return 0; // Перерисовать
+                        }
+                        break;
+                        
+                    case 0x47: // Home
+                        exp->selected_index = 0;
+                        exp->scroll_offset = 0;
+                        return 0;
+                        
+                    case 0x4F: // End
+                        exp->selected_index = exp->file_count - 1;
+                        if (exp->file_count > list_height) {
+                            exp->scroll_offset = exp->file_count - list_height;
+                        }
+                        return 0;
+                        
+                    case 0x1C: // Enter (extended)
+                        return 1; // Открыть
+                }
+            } else if (sc == 0x1C) { // Обычный Enter
+                return 1; // Открыть
+            } else if (sc == 0x01) { // ESC
+                return 2; // Выход
+            }
+        }
+        
+        // Небольшая задержка для плавности
+        for (volatile int i = 0; i < 5000; i++);
+    }
+}
+
+void wexplorer_command(void) {
+    Explorer exp;
+    exp.x = 0;
+    exp.y = 0;
+    exp.width = EXPLORER_WIDTH;
+    exp.height = EXPLORER_HEIGHT;
+    exp.selected_index = 0;
+    exp.scroll_offset = 0;
+    
+    strcpy(exp.current_path, current_dir);
+    explorer_refresh(&exp);
+    
+    int exit_explorer = 0;
+    unsigned char old_color = text_color;
+    
+    while (!exit_explorer) {
+        draw_explorer(&exp);
+        int action = explorer_handle_input(&exp);
+        
+        switch (action) {
+            case 1: // Enter - открыть файл/папку
+                if (exp.file_count > 0 && exp.selected_index < exp.file_count) {
+                    FileEntry* selected = &exp.files[exp.selected_index];
+                    
+                    if (selected->is_dir) {
+                        // Переход в папку
+                        if (strcmp(selected->name, "..") == 0) {
+                            // Назад
+                            if (strcmp(exp.current_path, "/") != 0) {
+                                char* last_slash = strrchr(exp.current_path, '/');
+                                if (last_slash != NULL) {
+                                    if (last_slash == exp.current_path) {
+                                        strcpy(exp.current_path, "/");
+                                    } else {
+                                        *last_slash = '\0';
+                                        if (strlen(exp.current_path) == 0) {
+                                            strcpy(exp.current_path, "/");
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // Вход в папку
+                            char new_path[MAX_PATH];
+                            if (strcmp(exp.current_path, "/") == 0) {
+                                strcpy(new_path, "/");
+                                strcat(new_path, selected->name);
+                            } else {
+                                strcpy(new_path, exp.current_path);
+                                if (new_path[strlen(new_path)-1] != '/') {
+                                    strcat(new_path, "/");
+                                }
+                                strcat(new_path, selected->name);
+                            }
+                            
+                            // Проверяем, что это действительно папка
+                            int is_valid_dir = 0;
+                            for (int i = 0; i < fs_count; i++) {
+                                if (strcmp(fs_cache[i].name, new_path) == 0 && fs_cache[i].is_dir) {
+                                    is_valid_dir = 1;
+                                    break;
+                                }
+                            }
+                            
+                            if (is_valid_dir) {
+                                strcpy(exp.current_path, new_path);
+                                // Добавляем слэш в конец если его нет
+                                if (exp.current_path[strlen(exp.current_path)-1] != '/') {
+                                    strcat(exp.current_path, "/");
+                                }
+                            }
+                        }
+                        
+                        explorer_refresh(&exp);
+                    } else {
+                        // Открыть файл в Writer
+                        char full_path[MAX_PATH];
+                        if (strcmp(exp.current_path, "/") == 0) {
+                            strcpy(full_path, selected->name);
+                        } else {
+                            strcpy(full_path, exp.current_path);
+                            strcat(full_path, selected->name);
+                        }
+                        
+                        // Выходим из explorer и открываем файл
+                        exit_explorer = 1;
+                        text_color = old_color;
+                        clear_screen();
+                        prints("Opening file in Writer: ");
+                        prints(full_path);
+                        newline();
+                        writer_command(full_path);
+                        return;
+                    }
+                }
+                break;
+                
+            case 2: // ESC - выход
+                exit_explorer = 1;
+                break;
+        }
+    }
+    
+    text_color = old_color;
+    clear_screen();
+    prints("WexExplorer closed.\n> ");
+}
+
 /* String functions */
 void memcpy(void* dst, void* src, int len) {
     char* d = (char*)dst;
@@ -1006,6 +1490,7 @@ void itoa(int value, char* str, int base) {
         *ptr1++ = tmp_char;
     }
 }
+
 
 /* VGA output */
 void clear_screen() {
@@ -1568,11 +2053,11 @@ void coreview_command(void) {
 
 /* OS version command */
 void osver_command() {
-    prints("OS Version: WexOS TinyShell v0.8 - Update FileSystem\n");
+    prints("OS Version: WexOS TinyShell v0.9 - Update UI\n");
 	prints("Added:\n");
-	prints("Commands Cat,fsck,format.\n");
+	prints("explorer\n");
 	prints("Changed:\n");
-	prints("Command help\n");
+	prints("help\n");
 	
     prints("Build Date: 2025-09-19\n");
 }
@@ -2420,7 +2905,7 @@ void show_help() {
         "color",    "colorf",   "install",  "config",   "memory",
         "cpu",      "date",     "watch",    "biosver",  "calc",
         "time",     "size",     "osver",    "history",  "format",
-        "fsck",     "cat",  NULL
+        "fsck",     "cat",      "explorer", NULL
     };
     
     prints("Available commands:\n");
@@ -2525,6 +3010,7 @@ void run_command(char* line) {
     else if(strcasecmp(line, "mkdir") == 0) { while(*p == ' ') p++; if(*p) fs_mkdir(p); else prints("Usage: mkdir <name>\n"); }
     else if(strcasecmp(line, "touch") == 0) { while(*p == ' ') p++; if(*p) fs_touch(p); else prints("Usage: touch <name>\n"); }
     else if(strcasecmp(line, "rm") == 0) { while(*p == ' ') p++; if(*p) fs_rm(p); else prints("Usage: rm <name>\n"); }
+	else if(strcasecmp(line, "explorer") == 0) wexplorer_command();
 	else if(strcasecmp(line, "cat") == 0) { 
     while(*p == ' ') p++; 
 	if(*p) fs_cat(p); 
@@ -2650,7 +3136,7 @@ void _start() {
     // --- Проверка пароля при загрузке ---
     check_login();
 
-    prints("WexOS TinyShell v0.8 - Update FileSystem\n");
+    prints("WexOS TinyShell v0.9 - Update UI\n");
     prints("Type 'help' for commands\n\n");
 
     char cmd_buf[128];
