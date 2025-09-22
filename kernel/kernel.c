@@ -2581,130 +2581,231 @@ void writer_command(const char* filename) {
     clear_screen();
 }
 
+/* Configuration screen - исправленная версия */
 /* Configuration screen */
+#define CONFIG_TITLE "{ SYSTEM CONFIGURATIONS }"
+#define HEADER_COLOR 0x1F
+#define FIELD_COLOR 0x07
+#define SELECTED_COLOR 0x4F
+#define VALUE_COLOR 0x0F
+#define FOOTER_COLOR 0x70
+
+typedef struct {
+    const char* label;
+    int x_label;
+    int x_value;
+    int max_width;
+    int min_val;
+    int max_val;
+} FieldConfig;
+
+const FieldConfig fields[] = {
+    {"User-Name:", 5, 20, 30, 0, 0},
+    {"User-Pass:", 5, 20, 30, 0, 0},
+    {"Admin-Pass:", 5, 20, 30, 0, 0},
+    {"Root-Pass:", 5, 20, 30, 0, 0},
+    {"Screen-Timeout:", 5, 22, 6, 60, 3600},
+    {"Max-Users:", 5, 20, 3, 1, 100},
+    {"Auto-Login:", 5, 20, 10, 0, 0},
+    {"Debug-Mode:", 5, 20, 10, 0, 0},
+    {"Log-Level:", 5, 20, 1, 0, 3}
+};
+
+#define FIELD_COUNT (sizeof(fields) / sizeof(fields[0]))
+
+void draw_box(int x1, int y1, int x2, int y2, int color) {
+    unsigned char old_color = text_color;
+    text_color = color;
+    
+    cursor_row = y1; cursor_col = x1; putchar(0xC9);
+    cursor_row = y1; cursor_col = x2; putchar(0xBB);
+    cursor_row = y2; cursor_col = x1; putchar(0xC8);
+    cursor_row = y2; cursor_col = x2; putchar(0xBC);
+    
+    for (int x = x1 + 1; x < x2; x++) {
+        cursor_row = y1; cursor_col = x; putchar(0xCD);
+        cursor_row = y2; cursor_col = x; putchar(0xCD);
+    }
+    
+    for (int y = y1 + 1; y < y2; y++) {
+        cursor_row = y; cursor_col = x1; putchar(0xBA);
+        cursor_row = y; cursor_col = x2; putchar(0xBA);
+    }
+    
+    text_color = old_color;
+}
+
+void clear_area(int x1, int y1, int x2, int y2, int color) {
+    unsigned char old_color = text_color;
+    text_color = color;
+    
+    for (int y = y1; y <= y2; y++) {
+        cursor_row = y;
+        for (int x = x1; x <= x2; x++) {
+            cursor_col = x;
+            putchar(' ');
+        }
+    }
+    
+    text_color = old_color;
+}
+
+void get_password_input(char* buffer, int max_len, int row, int col, int width) {
+    char temp_buffer[32];
+    int temp_len = 0;
+    
+    for (int i = 0; i < 32; i++) temp_buffer[i] = 0;
+    
+    while(1) {
+        cursor_row = row;
+        cursor_col = col;
+        for(int i = 0; i < width; i++) putchar(' ');
+        
+        cursor_row = row;
+        cursor_col = col;
+        for(int i = 0; i < temp_len; i++) putchar('*');
+        
+        cursor_row = row;
+        cursor_col = col + temp_len;
+        
+        char c = keyboard_getchar();
+        if (c == '\n') break;
+        else if (c == '\b') {
+            if (temp_len > 0) {
+                temp_len--;
+                temp_buffer[temp_len] = '\0';
+            }
+        } else if (c >= 32 && c <= 126 && temp_len < max_len - 1) {
+            temp_buffer[temp_len] = c;
+            temp_len++;
+            temp_buffer[temp_len] = '\0';
+        }
+    }
+    
+    strcpy(buffer, temp_buffer);
+}
+
 void draw_config_screen(int current_field) {
-    text_color = 0x1F;
     clear_screen();
     
-    cursor_row = 0;
-    cursor_col = (COLS - 18) / 2;
-    prints("{SYSTEM CONFIGURATIONS}");
+    cursor_row = 1;
+    cursor_col = (COLS - strlen(CONFIG_TITLE)) / 2;
+    text_color = HEADER_COLOR;
+    prints(CONFIG_TITLE);
     
-    cursor_row = 2; cursor_col = 5;
-    prints("User-Name: "); prints(temp_config.user_name);
-    cursor_row = 3; cursor_col = 5;
-    prints("User-Pass: "); prints("********");
-    cursor_row = 4; cursor_col = 5;
-    prints("Administration-Pass: "); prints("********");
-    cursor_row = 5; cursor_col = 5;
-    prints("Root-Pass: "); prints("********");
-    cursor_row = 6; cursor_col = 5;
-    prints("Screen-Timeout: "); 
-    char timeout_str[10];
-    itoa(temp_config.screen_timeout, timeout_str, 10);
-    prints(timeout_str); prints(" sec");
-    cursor_row = 7; cursor_col = 5;
-    prints("Max-Users: "); 
-    char users_str[10];
-    itoa(temp_config.max_users, users_str, 10);
-    prints(users_str);
-    cursor_row = 8; cursor_col = 5;
-    prints("Auto-Login: "); prints(temp_config.auto_login ? "Enabled" : "Disabled");
-    cursor_row = 9; cursor_col = 5;
-    prints("Debug-Mode: "); prints(temp_config.debug_mode ? "Enabled" : "Disabled");
-    cursor_row = 10; cursor_col = 5;
-    prints("Log-Level: "); 
-    char level_str[2] = { '0' + temp_config.log_level, 0 };
-    prints(level_str);
+    draw_box(3, 3, COLS-3, 17, FIELD_COLOR);
     
-    cursor_row = current_field + 2;
-    cursor_col = 5;
-    text_color = 0x4F;
-    switch(current_field) {
-        case 0: 
-            for(int i=0;i<20;i++) putchar(' ');
-            cursor_row = current_field + 2;
-            cursor_col = 5;
-            prints("User-Name: ");
-            break;
-        case 1: 
-            for(int i=0;i<20;i++) putchar(' ');
-            cursor_row = current_field + 2;
-            cursor_col = 5;
-            prints("User-Pass: ");
-            break;
-        case 2: 
-            for(int i=0;i<30;i++) putchar(' ');
-            cursor_row = current_field + 2;
-            cursor_col = 5;
-            prints("Administration-Pass: ");
-            break;
-        case 3: 
-            for(int i=0;i<20;i++) putchar(' ');
-            cursor_row = current_field + 2;
-            cursor_col = 5;
-            prints("Root-Pass: ");
-            break;
-        case 4: 
-            for(int i=0;i<25;i++) putchar(' ');
-            cursor_row = current_field + 2;
-            cursor_col = 5;
-            prints("Screen-Timeout: ");
-            break;
-        case 5: 
-            for(int i=0;i<20;i++) putchar(' ');
-            cursor_row = current_field + 2;
-            cursor_col = 5;
-            prints("Max-Users: ");
-            break;
-        case 6: 
-            for(int i=0;i<20;i++) putchar(' ');
-            cursor_row = current_field + 2;
-            cursor_col = 5;
-            prints("Auto-Login: ");
-            break;
-        case 7: 
-            for(int i=0;i<20;i++) putchar(' ');
-            cursor_row = current_field + 2;
-            cursor_col = 5;
-            prints("Debug-Mode: ");
-            break;
-        case 8: 
-            for(int i=0;i<20;i++) putchar(' ');
-            cursor_row = current_field + 2;
-            cursor_col = 5;
-            prints("Log-Level: ");
-            break;
+    for (int i = 0; i < FIELD_COUNT; i++) {
+        cursor_row = i + 5;
+        cursor_col = fields[i].x_label;
+        
+        if (i == current_field) {
+            text_color = SELECTED_COLOR;
+            clear_area(fields[i].x_label, i + 5, fields[i].x_label + fields[i].max_width + 15, i + 5, SELECTED_COLOR);
+            cursor_row = i + 5;
+            cursor_col = fields[i].x_label;
+        } else {
+            text_color = FIELD_COLOR;
+        }
+        
+        prints(fields[i].label);
+        
+        cursor_col = fields[i].x_value;
+        text_color = (i == current_field) ? SELECTED_COLOR : VALUE_COLOR;
+        
+        switch(i) {
+            case 0: prints(temp_config.user_name); break;
+            case 1: 
+            case 2: 
+            case 3: prints("********"); break;
+            case 4: {
+                char timeout_str[10];
+                itoa(temp_config.screen_timeout, timeout_str, 10);
+                prints(timeout_str); prints(" sec");
+                break;
+            }
+            case 5: {
+                char users_str[10];
+                itoa(temp_config.max_users, users_str, 10);
+                prints(users_str);
+                break;
+            }
+            case 6: prints(temp_config.auto_login ? "[X] Enabled" : "[ ] Disabled"); break;
+            case 7: prints(temp_config.debug_mode ? "[X] Enabled" : "[ ] Disabled"); break;
+            case 8: {
+                char level_str[2] = { '0' + temp_config.log_level, 0 };
+                prints(level_str);
+                prints(" (");
+                switch(temp_config.log_level) {
+                    case 0: prints("None"); break;
+                    case 1: prints("Error"); break;
+                    case 2: prints("Warning"); break;
+                    case 3: prints("Debug"); break;
+                }
+                prints(")");
+                break;
+            }
+        }
     }
-    text_color = 0x1F;
     
-    cursor_row = 20; cursor_col = 5;
-    prints("UP/DOWN: Select  ENTER: Edit  F9: Save  ESC: Exit");
+    text_color = FOOTER_COLOR;
+    cursor_row = 19;
+    cursor_col = 0;
+    clear_area(0, 19, COLS-1, 19, FOOTER_COLOR);
+    
+    cursor_row = 19;
+    cursor_col = 2;
+    prints("UP/DOWN: Navigate  ENTER: Edit  SPACE: Toggle  F9: Save  ESC: Cancel");
+    
+    cursor_row = 21;
+    cursor_col = 2;
+    text_color = FIELD_COLOR;
+    clear_area(2, 21, COLS-3, 21, FIELD_COLOR);
+    
+    switch(current_field) {
+        case 0: prints("Enter user name (1-30 characters)"); break;
+        case 1: prints("Enter user password"); break;
+        case 2: prints("Enter administration password"); break;
+        case 3: prints("Enter root password"); break;
+        case 4: prints("Screen timeout in seconds (60-3600)"); break;
+        case 5: prints("Maximum number of users (1-100)"); break;
+        case 6: prints("Toggle auto-login on startup"); break;
+        case 7: prints("Toggle debug mode"); break;
+        case 8: prints("Set log level: 0=None, 1=Error, 2=Warning, 3=Debug"); break;
+    }
 }
 
 void edit_config_field(int field_num) {
-    cursor_row = field_num + 2;
-    cursor_col = 25;
-    text_color = 0x4F;
+    cursor_row = field_num + 5;
+    cursor_col = fields[field_num].x_value;
+    text_color = SELECTED_COLOR;
     
     switch(field_num) {
         case 0: 
-            get_input(temp_config.user_name, 31, field_num + 2, 25, 30);
+            get_input(temp_config.user_name, 31, field_num + 5, 
+                     fields[field_num].x_value, fields[field_num].max_width);
             break;
         case 1: 
-            get_input(temp_config.user_pass, 31, field_num + 2, 25, 30);
+            get_password_input(temp_config.user_pass, 31, field_num + 5, 
+                              fields[field_num].x_value, fields[field_num].max_width);
             break;
         case 2: 
-            get_input(temp_config.admin_pass, 31, field_num + 2, 25, 30);
+            get_password_input(temp_config.admin_pass, 31, field_num + 5, 
+                              fields[field_num].x_value, fields[field_num].max_width);
             break;
         case 3: 
-            get_input(temp_config.root_pass, 31, field_num + 2, 25, 30);
+            get_password_input(temp_config.root_pass, 31, field_num + 5, 
+                              fields[field_num].x_value, fields[field_num].max_width);
             break;
         case 4: 
-            get_number_input(&temp_config.screen_timeout, 60, 3600, field_num + 2, 25, 6);
+            get_number_input(&temp_config.screen_timeout, fields[field_num].min_val, 
+                           fields[field_num].max_val, field_num + 5, 
+                           fields[field_num].x_value, fields[field_num].max_width);
             break;
         case 5: 
-            get_number_input(&temp_config.max_users, 1, 100, field_num + 2, 25, 3);
+            get_number_input(&temp_config.max_users, fields[field_num].min_val, 
+                           fields[field_num].max_val, field_num + 5, 
+                           fields[field_num].x_value, fields[field_num].max_width);
             break;
         case 6: 
             temp_config.auto_login = !temp_config.auto_login;
@@ -2713,11 +2814,25 @@ void edit_config_field(int field_num) {
             temp_config.debug_mode = !temp_config.debug_mode;
             break;
         case 8: 
-            get_number_input(&temp_config.log_level, 0, 3, field_num + 2, 25, 1);
+            get_number_input(&temp_config.log_level, fields[field_num].min_val, 
+                           fields[field_num].max_val, field_num + 5, 
+                           fields[field_num].x_value, fields[field_num].max_width);
             break;
     }
     
-    text_color = 0x1F;
+    text_color = FIELD_COLOR;
+}
+
+void show_message(const char* message, int color) {
+    unsigned char old_color = text_color;
+    text_color = color;
+    
+    clear_area(0, 17, COLS-1, 17, color);
+    cursor_row = 17;
+    cursor_col = (COLS - strlen(message)) / 2;
+    prints(message);
+    
+    text_color = old_color;
 }
 
 void config_command() {
@@ -2730,38 +2845,76 @@ void config_command() {
     while(!exit_config) {
         draw_config_screen(current_field);
         
-        char key = getch_with_arrows();
+        // Обработка клавиш как в WexExplorer
+        int action = 0;
+        while (action == 0) {
+            unsigned char st = inb(0x64);
+            if (st & 1) {
+                unsigned char sc = inb(0x60);
+                
+                if (sc == 0xE0) {
+                    while (!(inb(0x64) & 1));
+                    sc = inb(0x60);
+                    
+                    if (sc == 0x48) { // Up
+                        current_field = (current_field > 0) ? current_field - 1 : FIELD_COUNT - 1;
+                        action = 1;
+                    }
+                    else if (sc == 0x50) { // Down
+                        current_field = (current_field < FIELD_COUNT - 1) ? current_field + 1 : 0;
+                        action = 1;
+                    }
+                    else if (sc == 0x1C) { // Enter
+                        action = 2;
+                    }
+                } 
+                else if (sc == 0x1C) { // Enter
+                    action = 2;
+                }
+                else if (sc == 0x01) { // ESC
+                    action = 3;
+                }
+                else if (sc == 0x39) { // Space
+                    action = 4;
+                }
+                else if (sc == 0x43) { // F9
+                    action = 5;
+                }
+            }
+            
+            for (volatile int i = 0; i < 5000; i++);
+        }
         
-        switch(key) {
-            case 'U': 
-                current_field = (current_field == 0) ? 8 : current_field - 1;
+        switch(action) {
+            case 1: break; // Навигация
+            case 2: edit_config_field(current_field); break;
+            case 4: 
+                if (current_field == 6 || current_field == 7) {
+                    edit_config_field(current_field);
+                }
                 break;
-            case 'D': 
-                current_field = (current_field == 8) ? 0 : current_field + 1;
-                break;
-            case '\n': 
-                edit_config_field(current_field);
-                break;
-            case '\xF9': 
+            case 5: 
                 save_config = 1;
                 exit_config = 1;
                 break;
-            case 27: 
+            case 3: 
                 exit_config = 1;
                 break;
         }
     }
     
+    clear_screen();
+    
     if (save_config) {
         sys_config = temp_config;
-        cursor_row = 17; cursor_col = 5;
-        prints("Configuration saved!");
+        show_message("Configuration successfully saved!", 0x2F);
     } else {
-        cursor_row = 17; cursor_col = 5;
-        prints("Changes discarded!");
+        show_message("Changes discarded!", 0x4F);
     }
     
-    cursor_row = 19; cursor_col = 5;
+    cursor_row = 19;
+    cursor_col = (COLS - 28) / 2;
+    text_color = FIELD_COLOR;
     prints("Press any key to continue...");
     keyboard_getchar();
     
