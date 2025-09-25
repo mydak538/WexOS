@@ -1852,138 +1852,206 @@ void kill_command(const char* arg) {
     }
 }
 
-
 void cmd_desktop() {
     // Сохраняем старый цвет текста
     unsigned char old_color = text_color;
 
-    // Устанавливаем цвет для рабочего стола (темно-синий фон, белый текст)
-    text_color = 0x1F; // Синий фон, белый текст (атрибут VGA)
-
+    // Устанавливаем цвет для рабочего стола
+    text_color = 0x1F;
     clear_screen();
 
-    // ------ Отрисовка статичного интерфейса рабочего стола ------
-    // Верхняя панель (1 строка)
-    for (int c = 0; c < COLS; c++) {
-        VGA[0 * COLS + c] = (unsigned short)(' ' | (0x70 << 8)); // Серый
-    }
-    
-
-  for (int r = 2; r < 5; r++) {
-        for (int c = COLS-5; c < COLS-2; c++) {
-            VGA[r * COLS + c] = (unsigned short)(' ' | (0x00 << 8)); // Черный
+    // ------ Рисуем статический фон ------
+    for (int r = 0; r < ROWS; r++) {
+        for (int c = 0; c < COLS; c++) {
+            if (r > ROWS - 5) {
+                // Трава (нижние 5 строк)
+                int grass_pattern = (r + c) % 4;
+                char grass_char = (grass_pattern == 0) ? '`' : ' ';
+                int grass_color = 0x20 + grass_pattern;
+                VGA[r * COLS + c] = (unsigned short)(grass_char | (grass_color << 8));
+            } else {
+                // Небо
+                int sky_color = 0x10 + (r * 2 / ROWS);
+                VGA[r * COLS + c] = (unsigned short)(' ' | (sky_color << 8));
+            }
         }
     }
-    cursor_row = 3; cursor_col = COLS-4;
-    text_color = 0x0F; // Черный фон, белый текст
-    putchar('T');
 
-    // Подпись "Recycle bin" под корзиной
-    cursor_row = 5; cursor_col = COLS-12;
-    text_color = 0x70; // Серый фон, черный текст
+    // ------ Надпись "WexHi" на траве ------
+    cursor_row = ROWS - 3;
+    cursor_col = (COLS - 5) / 2;
+    text_color = 0x2F;
+    prints("WexHi");
+
+    // ------ Верхняя панель ------
+    for (int c = 0; c < COLS; c++) {
+        VGA[0 * COLS + c] = (unsigned short)(' ' | (0x70 << 8));
+    }
+
+    // ------ Иконки ------
+    int icon_y = 1;
+    int icon_spacing = 10;
+    
+    // Иконка Terminal
+    int terminal_x = 5;
+    for (int r = icon_y; r < icon_y + 3; r++) {
+        for (int c = terminal_x; c < terminal_x + 3; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (0x00 << 8));
+        }
+    }
+    cursor_row = icon_y + 1; cursor_col = terminal_x + 1;
+    text_color = 0x0F;
+    putchar('T');
+    cursor_row = icon_y + 4; cursor_col = terminal_x - 1;
+    text_color = 0x70;
     prints("Terminal");
-	
-    // ------ Основной цикл рабочего стола ------
+
+    // Иконка Explorer
+    int explorer_x = terminal_x + icon_spacing;
+    for (int r = icon_y; r < icon_y + 3; r++) {
+        for (int c = explorer_x; c < explorer_x + 3; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (0x00 << 8));
+        }
+    }
+    cursor_row = icon_y + 1; cursor_col = explorer_x + 1;
+    text_color = 0x0F;
+    putchar('E');
+    cursor_row = icon_y + 4; cursor_col = explorer_x - 2;
+    text_color = 0x70;
+    prints("Explorer");
+
+    // Иконка Recycle Bin
+    int recycle_x = explorer_x + icon_spacing;
+    for (int r = icon_y; r < icon_y + 3; r++) {
+        for (int c = recycle_x; c < recycle_x + 3; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (0x00 << 8));
+        }
+    }
+    cursor_row = icon_y + 1; cursor_col = recycle_x + 1;
+    text_color = 0x0F;
+    putchar('R');
+    cursor_row = icon_y + 4; cursor_col = recycle_x - 2;
+    text_color = 0x70;
+    prints("Recycle Bin");
+
+    // ------ Основной цикл ------
     int cursor_x = COLS / 2;
     int cursor_y = ROWS / 2;
     int exit_desktop = 0;
+    int last_second = -1; // Для обновления времени только при смене секунды
+
+    // Начальное отображение времени
+    char datetime[18];
+    get_datetime(datetime);
+    cursor_row = 0; cursor_col = (COLS - 17) / 2;
+    text_color = 0x70;
+    prints(datetime);
 
     while (!exit_desktop) {
-        // ------ Обновление времени на верхней панели ------
-        char datetime[18];
+        // ------ Обновление времени только при смене секунды ------
         get_datetime(datetime);
-
-        // Очищаем область времени (центр верхней панели)
-        cursor_row = 0; cursor_col = (COLS - 17) / 2;
-        text_color = 0x70;
-        for (int i = 0; i < 17; i++) {
-            putchar(' ');
+        int current_second = (datetime[17] - '0') + (datetime[16] - '0') * 10;
+        
+        if (current_second != last_second) {
+            cursor_row = 0; cursor_col = (COLS - 17) / 2;
+            text_color = 0x70;
+            prints(datetime);
+            last_second = current_second;
         }
-
-        // Выводим реальное время
-        cursor_row = 0; cursor_col = (COLS - 17) / 2;
-        prints(datetime);
 
         // ------ Отрисовка курсора ------
         cursor_row = cursor_y;
         cursor_col = cursor_x;
-        text_color = 0x4F; // Красный фон, белый текст для курсора
-        putchar('X'); // Символ курсора
+        text_color = 0x4F;
+        putchar('X');
 
-        // ------ Обработка ввода ------
-        // Проверяем наличие нажатия клавиши без блокировки
-        unsigned char st = inb(0x64);
-        if (st & 1) {
+        // ------ Неблокирующая обработка ввода ------
+        if (inb(0x64) & 1) {
             unsigned char sc = inb(0x60);
             
-            // Обработка стрелочек (extended codes)
+            // Стираем старый курсор перед перемещением
+            cursor_row = cursor_y;
+            cursor_col = cursor_x;
+            if (cursor_y > ROWS - 5) {
+                text_color = 0x20 + ((cursor_y + cursor_x) % 4);
+                putchar((text_color == 0x20) ? '`' : ' ');
+            } else {
+                text_color = 0x10 + (cursor_y * 2 / ROWS);
+                putchar(' ');
+            }
+            
             if (sc == 0xE0) {
-                // Ждем следующий код стрелки
+                // Расширенный код
                 while (!(inb(0x64) & 1));
                 sc = inb(0x60);
                 
-                // Стираем курсор перед перемещением
-                cursor_row = cursor_y;
-                cursor_col = cursor_x;
-                text_color = 0x1F;
-                putchar(' ');
-                
-                // Обработка перемещения
                 switch(sc) {
-                    case 0x48: if (cursor_y > 1) cursor_y--; break;     // Стрелка вверх
-                    case 0x50: if (cursor_y < ROWS-1) cursor_y++; break; // Стрелка вниз
-                    case 0x4B: if (cursor_x > 0) cursor_x--; break;     // Стрелка влево
-                    case 0x4D: if (cursor_x < COLS-1) cursor_x++; break; // Стрелка вправо
-                    case 0x1C: // Enter (extended)
-                        // Проверяем, нажали ли на кнопку T (терминал)
-                        if (cursor_y >= 2 && cursor_y <= 3 && cursor_x >= 2 && cursor_x <= 3) {
-                            text_color = old_color;
-                            clear_screen();
-                            prints("Launching terminal...\n");
-                            exit_desktop = 1;
-                        }
-                        // Проверяем, нажали ли на кнопку R (корзина)
-                        else if (cursor_y >= 2 && cursor_y <= 3 && cursor_x >= COLS-4 && cursor_x <= COLS-2) {
-                            text_color = old_color;
-                            clear_screen();
-                            prints("Opening Recycle Bin...\n");
-                            exit_desktop = 1;
+                    case 0x48: if (cursor_y > 1) cursor_y--; break;
+                    case 0x50: if (cursor_y < ROWS-1) cursor_y++; break;
+                    case 0x4B: if (cursor_x > 0) cursor_x--; break;
+                    case 0x4D: if (cursor_x < COLS-1) cursor_x++; break;
+                    case 0x1C: // Enter
+                        if (cursor_y >= icon_y && cursor_y <= icon_y + 2) {
+                            if (cursor_x >= terminal_x && cursor_x <= terminal_x + 2) {
+                                exit_desktop = 1;
+                                text_color = old_color;
+                                clear_screen();
+                                prints("Launching terminal...\n");
+                            }
+                            else if (cursor_x >= explorer_x && cursor_x <= explorer_x + 2) {
+                                exit_desktop = 1;
+                                text_color = old_color;
+                                clear_screen();
+                                prints("Launching Explorer...\n");
+                                wexplorer_command();
+                            }
+                            else if (cursor_x >= recycle_x && cursor_x <= recycle_x + 2) {
+                                exit_desktop = 1;
+                                text_color = old_color;
+                                clear_screen();
+                                prints("Opening Recycle Bin...\n");
+                            }
                         }
                         break;
                 }
             }
-            // Обработка обычного Enter и ESC
-            else if (sc == 0x1C) { // Enter
-                // Проверяем, нажали ли на кнопку T (терминал)
-                if (cursor_y >= 2 && cursor_y <= 3 && cursor_x >= 2 && cursor_x <= 3) {
-                    text_color = old_color;
-                    clear_screen();
-                    prints("Launching terminal...\n");
-                    exit_desktop = 1;
-                }
-                // Проверяем, нажали ли на кнопку R (корзина)
-                else if (cursor_y >= 2 && cursor_y <= 3 && cursor_x >= COLS-4 && cursor_x <= COLS-2) {
-                    text_color = old_color;
-                    clear_screen();
-                    prints("Opening Recycle Bin...\n");
-                    exit_desktop = 1;
+            else if (sc == 0x1C) {
+                // Enter
+                if (cursor_y >= icon_y && cursor_y <= icon_y + 2) {
+                    if (cursor_x >= terminal_x && cursor_x <= terminal_x + 2) {
+                        exit_desktop = 1;
+                        text_color = old_color;
+                        clear_screen();
+                        prints("Launching terminal...\n");
+                    }
+                    else if (cursor_x >= explorer_x && cursor_x <= explorer_x + 2) {
+                        exit_desktop = 1;
+                        text_color = old_color;
+                        clear_screen();
+                        prints("Launching Explorer...\n");
+                        wexplorer_command();
+                    }
+                    else if (cursor_x >= recycle_x && cursor_x <= recycle_x + 2) {
+                        exit_desktop = 1;
+                        text_color = old_color;
+                        clear_screen();
+                        prints("Opening Recycle Bin...\n");
+                    }
                 }
             }
-            else if (sc == 0x01) { // ESC
+            else if (sc == 0x01) { // Escape
                 exit_desktop = 1;
             }
         }
 
-        // Небольшая задержка для плавности
-        for (volatile int i = 0; i < 10000; i++);
+        // Короткая задержка вместо длинной блокирующей
+        for (volatile int i = 0; i < 1000; i++);
     }
 
-    // Восстанавливаем цвет и очищаем экран
     text_color = old_color;
     clear_screen();
     prints("Exited desktop.\n> ");
 }
-
 
 /* CPU information command */
 void cpu_command() {
