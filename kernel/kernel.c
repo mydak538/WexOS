@@ -2121,13 +2121,89 @@ void coreview_command(void) {
 
 /* OS version command */
 void osver_command() {
-    prints("OS Version: WexOS TinyShell v0.9 - Update UI\n");
-	prints("Added:\n");
-	prints("explorer\n");
-	prints("Changed:\n");
-	prints("help\n");
-	
-    prints("Build Date: 2025-09-19\n");
+    prints("OS Version: WexOS Shell v1.0 - Update UI\n");
+}
+
+void osinfo_command() {
+    prints("=== System Information ===\n");
+    
+    // BIOS информация
+    prints("BIOS Information:\n");
+    outb(0x70, 0x0E);
+    unsigned char bios_major = inb(0x71);
+    outb(0x70, 0x0F);
+    unsigned char bios_minor = inb(0x71);
+    char buf[10];
+    prints("  Version: ");
+    itoa(bios_major, buf, 10);
+    prints(buf);
+    prints(".");
+    itoa(bios_minor, buf, 10);
+    prints(buf);
+    newline();
+    
+    // CPU информация
+    prints("\nCPU Information:\n");
+    char vendor[13] = {0};
+    u32 eax, ebx, ecx, edx;
+    __asm__ volatile("mov $0, %%eax; cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+    vendor[0] = (ebx >> 0) & 0xFF;
+    vendor[1] = (ebx >> 8) & 0xFF;
+    vendor[2] = (ebx >> 16) & 0xFF;
+    vendor[3] = (ebx >> 24) & 0xFF;
+    vendor[4] = (edx >> 0) & 0xFF;
+    vendor[5] = (edx >> 8) & 0xFF;
+    vendor[6] = (edx >> 16) & 0xFF;
+    vendor[7] = (edx >> 24) & 0xFF;
+    vendor[8] = (ecx >> 0) & 0xFF;
+    vendor[9] = (ecx >> 8) & 0xFF;
+    vendor[10] = (ecx >> 16) & 0xFF;
+    vendor[11] = (ecx >> 24) & 0xFF;
+    prints("  Vendor: ");
+    prints(vendor);
+    newline();
+    
+    __asm__ volatile("mov $1, %%eax; cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+    prints("  Family: ");
+    itoa((eax >> 8) & 0x0F, buf, 10);
+    prints(buf);
+    prints("  Model: ");
+    itoa((eax >> 4) & 0x0F, buf, 10);
+    prints(buf);
+    prints("  Stepping: ");
+    itoa(eax & 0x0F, buf, 10);
+    prints(buf);
+    newline();
+    
+    // Память
+    prints("\nMemory Information:\n");
+    outb(0x70, 0x30);
+    unsigned short base_mem_low = inb(0x71);
+    outb(0x70, 0x31);
+    unsigned short base_mem_high = inb(0x71);
+    unsigned short base_memory = (base_mem_high << 8) | base_mem_low;
+    
+    outb(0x70, 0x34);
+    unsigned short ext_mem_low = inb(0x71);
+    outb(0x70, 0x35);
+    unsigned short ext_mem_high = inb(0x71);
+    unsigned short ext_memory = (ext_mem_high << 8) | ext_mem_low;
+    
+    unsigned int total_memory_kb = base_memory + ext_memory;
+    unsigned int total_memory_mb = total_memory_kb / 1024;
+    
+    prints("  Total Memory: ");
+    itoa(total_memory_mb, buf, 10);
+    prints(buf);
+    prints(" MB\n");
+    
+    // OS информация
+    prints("\nOS Information:\n");
+    prints("  Name: WexOS TinyShell\n");
+    prints("  Version: 1.0\n");
+    prints("  Build: 2025-09-05\n");
+    
+    prints("==========================\n");
 }
 
 /* Date command without network */
@@ -2168,7 +2244,6 @@ void date_command() {
 /* BIOS version command */
 void biosver_command() {
     prints("BIOS Version: WexOS Virtual BIOS v1.0\n");
-    prints("Build Date: 2023-12-01\n");
     prints("SMBIOS: 2.8\n");
 }
 
@@ -2649,7 +2724,6 @@ void writer_command(const char* filename) {
     clear_screen();
 }
 
-/* Configuration screen - исправленная версия */
 /* Configuration screen */
 #define CONFIG_TITLE "{ SYSTEM CONFIGURATIONS }"
 #define HEADER_COLOR 0x1F
@@ -3126,7 +3200,7 @@ void show_help() {
         "color",    "colorf",   "install",  "config",   "memory",
         "cpu",      "date",     "watch",    "biosver",  "calc",
         "time",     "size",     "osver",    "history",  "format",
-        "fsck",     "cat",      "explorer", NULL
+        "fsck",     "cat",      "explorer", "osinfo", NULL
     };
     
     prints("Available commands:\n");
@@ -3223,6 +3297,7 @@ void run_command(char* line) {
     else if(strcasecmp(line, "clear") == 0) clear_screen();
 	else if(strcasecmp(line, "memory") == 0) memory_command();
 	else if(strcasecmp(line, "install") == 0) install_disk();
+	else if(strcasecmp(line, "osinfo") == 0) osinfo_command();
 	else if(strcasecmp(line, "desktop") == 0) cmd_desktop();
     else if(strcasecmp(line, "ls") == 0) fs_ls();
 	else if(strcasecmp(line, "format") == 0) fs_format();
@@ -3357,7 +3432,7 @@ void _start() {
     // --- Проверка пароля при загрузке ---
     check_login();
 
-    prints("WexOS TinyShell v0.9 - Update UI\n");
+    prints("WexOS Shell v1.0 - Update UI\n");
     prints("Type 'help' for commands\n\n");
 
     char cmd_buf[128];
