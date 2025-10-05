@@ -24,6 +24,10 @@ typedef unsigned char u8;
 #define BLACK 0x000000
 #define WHITE 0xFFFFFF
 
+#define LOADING_BG_COLOR 0x00      // Черный
+#define LOADING_TEXT_COLOR 0x0F    // Белый на черном
+#define LOADING_ACCENT_COLOR 0x0B  // Голубой
+
 #define KEY_UP    0x48
 #define KEY_DOWN  0x50
 #define KEY_LEFT  0x4B
@@ -34,6 +38,9 @@ typedef unsigned char u8;
 #define EXPLORER_HEIGHT ROWS
 #define MAX_VISIBLE_FILES (ROWS - 4)
 #define PATH_MAX_DISPLAY 70
+
+#define AUTORUN_FILE "SystemRoot/config/autorun.cfg"
+#define AUTORUN_MAX_COMMAND 128
 
 
 typedef struct {
@@ -63,7 +70,6 @@ typedef struct {
 
 /* Function prototypes */
 void itoa(int value, char* str, int base);
-
 void coreview_command(void);
 void putchar(char ch);
 char keyboard_getchar();
@@ -75,6 +81,9 @@ void draw_cursor(int x, int y);
 unsigned char get_key(); // возвращает сканкод нажатой клавиши (PS/2)               
 void get_datetime(char *buffer); 
 void open_terminal();
+void show_loading_screen(void);
+void draw_wexos_logo(void);
+void draw_loading_animation(int frame, int progress);
 void memcpy(void* dst, void* src, int len);
 int strcmp(const char* a, const char* b);
 int strlen(const char* s);
@@ -115,6 +124,19 @@ void explorer_refresh(Explorer* exp);
 int explorer_handle_input(Explorer* exp);
 void draw_file_list(Explorer* exp);
 void draw_status_bar(Explorer* exp);
+void autorun_command(const char* arg);
+void autorun_execute(void);
+void autorun_save_config(const char* command);
+void run_command(char* line);
+void trim_whitespace(char* str);
+
+/* Command history */
+int history_count = 0;
+int history_index = 0;
+
+/* AutoRun configuration */
+char autorun_command_buf[AUTORUN_MAX_COMMAND] = {0};
+int autorun_enabled = 0;
 
 /* Multiboot header */
 typedef struct {
@@ -170,8 +192,6 @@ int fs_dirty = 0;
 
 /* Command history */
 char command_history[MAX_HISTORY][128];
-int history_count = 0;
-int history_index = 0;
 
 /* ATA functions */
 void ata_wait_ready() {
@@ -1409,6 +1429,8 @@ void wexplorer_command(void) {
     prints("WexExplorer closed.\n> ");
 }
 
+
+
 /* String functions */
 void memcpy(void* dst, void* src, int len) {
     char* d = (char*)dst;
@@ -2410,8 +2432,11 @@ void install_disk() {
         fs_mkdir("SystemRoot/logs");
         fs_mkdir("SystemRoot/drivers");
         fs_mkdir("SystemRoot/kerneldrivers");
+		fs_mkdir("SystemRoot/config");
 		fs_mkdir("filesystem");
 		fs_mkdir("filesystem/WexFs");
+		
+		
 
         prints("Copying system files...\n");
         fs_touch("SystemRoot/bin/taskmgr.bin");
@@ -2435,6 +2460,15 @@ void install_disk() {
 		fs_touch("filesystem/WexFs/ls.bin");
 		fs_touch("filesystem/WexFs/copy.bin");
 		fs_touch("filesystem/WexFs/rm.bin");
+		
+        prints("Creating autorun configuration...\n");
+        fs_touch("SystemRoot/config/autorun.cfg");
+        FSNode* autorun_file = fs_find_file("SystemRoot/config/autorun.cfg");
+        if (autorun_file) {
+            strcpy(autorun_file->content, "desktop");
+            autorun_file->size = strlen("desktop");
+            prints("Desktop autorun configured\n");
+        }
 
         // Запись пароля в pass.cfg, если он задан
         if (password[0] != '\0') {
@@ -2456,7 +2490,161 @@ void install_disk() {
 }
 
 
+void autorun_save_config(const char* command) {
+    // Создаем или находим файл автозапуска
+    FSNode* autorun_file = fs_find_file(AUTORUN_FILE);
+    
+    if (!autorun_file) {
+        // Создаем директорию config если её нет
+        fs_mkdir("SystemRoot/config");
+        fs_touch(AUTORUN_FILE);
+        autorun_file = fs_find_file(AUTORUN_FILE);
+    }
+    
+    if (autorun_file) {
+        strcpy(autorun_file->content, command);
+        autorun_file->size = strlen(command);
+        fs_mark_dirty();
+        fs_save_to_disk();
+    }
+}
 
+void autorun_execute(void) {
+    // Сохраняем текущую директорию
+    char old_dir[MAX_PATH];
+    strcpy(old_dir, current_dir);
+    
+    // Ищем файл во всей файловой системе (без смены директории)
+    int found = 0;
+    for (int i = 0; i < fs_count; i++) {
+        if (strcmp(fs_cache[i].name, "SystemRoot/config/autorun.cfg") == 0 && !fs_cache[i].is_dir) {
+            FSNode* autorun_file = &fs_cache[i];
+            
+            if (autorun_file->size > 0) {
+                // Копируем содержимое
+                strcpy(autorun_command_buf, autorun_file->content);
+                
+                // Убираем символы переноса строки
+                char* newline = strchr(autorun_command_buf, '\n');
+                if (newline) *newline = '\0';
+                char* cr = strchr(autorun_command_buf, '\r');
+                if (cr) *cr = '\0';
+                
+                // Убираем пробелы
+                trim_whitespace(autorun_command_buf);
+                
+                if (strlen(autorun_command_buf) > 0) {
+                    prints("Executing autorun: '");
+                    prints(autorun_command_buf);
+                    prints("'\n");
+                    run_command(autorun_command_buf);
+                    found = 1;
+                }
+            }
+            break;
+        }
+    }
+    
+    // Восстанавливаем директорию
+    strcpy(current_dir, old_dir);
+}
+
+void autorun_command(const char* arg) {
+    if (arg == NULL || strlen(arg) == 0) {
+        // Показать текущую конфигурацию
+        prints("AutoRun: ");
+        if (autorun_enabled && autorun_command_buf[0] != '\0') {
+            prints("'");
+            prints(autorun_command_buf);
+            prints("'");
+        } else {
+            prints("disabled");
+        }
+        prints("\n");
+        return;
+    }
+    
+    // Разбираем аргументы
+    char command[128] = {0};
+    char state[10] = {0};
+    
+    // Копируем аргументы
+    char args[256];
+    strcpy(args, arg);
+    
+    // Проверяем на list
+    if (strcmp(args, "list") == 0) {
+        prints("AutoRun status: ");
+        prints(autorun_enabled ? "ENABLED" : "DISABLED");
+        prints("\nCommand: ");
+        if (autorun_command_buf[0] != '\0') {
+            prints(autorun_command_buf);
+        } else {
+            prints("<not set>");
+        }
+        prints("\n");
+        return;
+    }
+    
+    // Ищем первый пробел для разделения команды и состояния
+    char* space = strchr(args, ' ');
+    if (space) {
+        *space = '\0';
+        strcpy(command, args);
+        
+        // Пропускаем пробелы после команды
+        char* state_ptr = space + 1;
+        while (*state_ptr == ' ') state_ptr++;
+        
+        // Копируем состояние (on/off)
+        char* state_end = strchr(state_ptr, ' ');
+        if (state_end) {
+            *state_end = '\0';
+        }
+        strcpy(state, state_ptr);
+    } else {
+        // Если только один аргумент
+        strcpy(command, args);
+    }
+    
+    // Проверяем состояние (on/off)
+    if (strlen(state) == 0) {
+        prints("Usage: autorun <command> on/off\n");
+        return;
+    }
+    
+    if (strcmp(state, "on") != 0 && strcmp(state, "off") != 0) {
+        prints("Error: State must be 'on' or 'off'\n");
+        return;
+    }
+    
+    if (strcmp(state, "on") == 0) {
+        // Включаем автозапуск для команды
+        if (strlen(command) >= AUTORUN_MAX_COMMAND) {
+            prints("Error: Command too long\n");
+            return;
+        }
+        
+        if (strlen(command) == 0) {
+            prints("Error: Command cannot be empty\n");
+            return;
+        }
+        
+        strcpy(autorun_command_buf, command);
+        autorun_enabled = 1;
+        autorun_save_config(autorun_command_buf);
+        
+        prints("AutoRun enabled: '");
+        prints(command);
+        prints("'\n");
+    }
+    else if (strcmp(state, "off") == 0) {
+        // Выключаем автозапуск
+        autorun_enabled = 0;
+        autorun_save_config(autorun_command_buf);
+        prints("AutoRun disabled\n");
+    }
+}
 
 /* String input function */
 void get_input(char* buffer, int max_len, int row, int col, int field_len) {
@@ -3064,6 +3252,8 @@ void config_command() {
     clear_screen();
 }
 
+
+
 void watch_command() {
     unsigned char old_color = text_color;
     text_color = 0x0A; // Зеленый цвет
@@ -3200,7 +3390,7 @@ void show_help() {
         "color",    "colorf",   "install",  "config",   "memory",
         "cpu",      "date",     "watch",    "biosver",  "calc",
         "time",     "size",     "osver",    "history",  "format",
-        "fsck",     "cat",      "explorer", "osinfo", NULL
+        "fsck",     "cat",      "explorer", "osinfo",   "autorun",NULL
     };
     
     prints("Available commands:\n");
@@ -3307,6 +3497,12 @@ void run_command(char* line) {
     else if(strcasecmp(line, "touch") == 0) { while(*p == ' ') p++; if(*p) fs_touch(p); else prints("Usage: touch <name>\n"); }
     else if(strcasecmp(line, "rm") == 0) { while(*p == ' ') p++; if(*p) fs_rm(p); else prints("Usage: rm <name>\n"); }
 	else if(strcasecmp(line, "explorer") == 0) wexplorer_command();
+	else if(strcasecmp(line, "explorer") == 0) wexplorer_command();
+	else if(strcasecmp(line, "autorun") == 0) { 
+    while(*p == ' ') p++; 
+    if(*p) autorun_command(p); 
+    else prints("Usage: autorun <command> on/off\n       autorun list\n"); 
+}
 	else if(strcasecmp(line, "cat") == 0) { 
     while(*p == ' ') p++; 
 	if(*p) fs_cat(p); 
@@ -3421,18 +3617,163 @@ void memory_command() {
     }
 }
 
+/* Добавьте эту функцию где-нибудь перед _start() */
+void show_loading_screen(void) {
+    unsigned char old_color = text_color;
+    
+    // Очищаем экран черным цветом один раз
+    for(int r = 0; r < ROWS; r++) {
+        for(int c = 0; c < COLS; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (LOADING_BG_COLOR << 8));
+        }
+    }
+    
+    // Рисуем статичный логотип один раз
+    draw_wexos_logo();
+    
+    // Анимация загрузки - 2.5 секунды
+    int total_frames = 340; 
+    int frame_delay = 83000; // микросекунды на кадр
+    
+    for(int frame = 0; frame < total_frames; frame++) {
+        int progress = (frame * 100) / total_frames;
+        
+        // Только обновляем анимацию, не перерисовываем весь экран
+        draw_loading_animation(frame, progress);
+        
+        // Задержка для плавной анимации
+        for(volatile int i = 0; i < frame_delay; i++);
+    }
+    
+    // Финальный прогресс 100%
+    draw_loading_animation(total_frames, 100);
+    
+    // Короткая пауза перед переходом
+    for(volatile int i = 0; i < 1500000; i++);
+    
+    text_color = old_color;
+}
+
+void draw_wexos_logo(void) {
+    text_color = LOADING_TEXT_COLOR;
+    
+    // Красивый ASCII арт "WexOS"
+    cursor_row = 5;
+    cursor_col = 25;
+    prints("__      __        ____    ");
+    
+    cursor_row = 6;
+    cursor_col = 25;
+    prints("| | /| / /____ __/ __ \\___");
+    
+    cursor_row = 7;
+    cursor_col = 25;
+    prints("| |/ |/ / -_) \\ / /_/ (_-<");
+    
+    cursor_row = 8;
+    cursor_col = 25;
+    prints("|__/|__/\\__/_\\_\\\\____/___/");
+    
+    // Подпись версии
+    cursor_row = 10;
+    cursor_col = 35;
+    prints("WexOS v1.0");
+}
+
+void draw_loading_animation(int frame, int progress) {
+    // Очищаем только область анимации (строки 12-16)
+    for(int r = 12; r <= 16; r++) {
+        cursor_row = r;
+        cursor_col = 30;
+        for(int c = 0; c < 40; c++) {
+            putchar(' ');
+        }
+    }
+    
+    // Текст "Loading" с анимацией
+    cursor_row = 12;
+    cursor_col = 35;
+    text_color = LOADING_ACCENT_COLOR;
+    prints("Loading");
+    
+    // Анимированные точки после "Loading"
+    int dots = (frame / 8) % 4;
+    for(int i = 0; i < 3; i++) {
+        if(i < dots) {
+            putchar('.');
+        } else {
+            putchar(' ');
+        }
+    }
+    
+    // Процент загрузки
+    cursor_row = 14;
+    cursor_col = 38;
+    text_color = LOADING_TEXT_COLOR;
+    
+    char progress_str[5];
+    itoa(progress, progress_str, 10);
+    
+    // Красивое отображение процента
+    if(progress < 10) {
+        prints("  ");
+        prints(progress_str);
+    } else if(progress < 100) {
+        prints(" ");
+        prints(progress_str);
+    } else {
+        prints(progress_str);
+    }
+    prints("%");
+    
+    // Простая анимация прогресса (точки)
+    cursor_row = 16;
+    cursor_col = 32;
+    text_color = LOADING_ACCENT_COLOR;
+    
+    int total_dots = 20;
+    int filled_dots = (progress * total_dots) / 100;
+    
+    for(int i = 0; i < total_dots; i++) {
+        if(i < filled_dots) {
+            putchar(0xFE); // Заполненный блок
+        } else {
+            putchar(0xB0); // Светлый затененный блок
+        }
+    }
+    
+    // Информационная строка
+    cursor_row = 18;
+    cursor_col = 30;
+    text_color = LOADING_TEXT_COLOR;
+    prints("Initializing system components");
+}
 /* Kernel main */
 void _start() {
     text_color = 0x07;
+
+    // --- Показываем экран загрузки ---
+    show_loading_screen();
+    
+    // Очищаем экран после загрузки
     clear_screen();
 
+    // Инициализация процессов
     init_processes();
+    
+    // Инициализация файловой системы
     fs_init();
 
     // --- Проверка пароля при загрузке ---
-    check_login();
+    if (!check_login()) {
+        prints("Login failed. System halted.\n");
+        while(1) { __asm__ volatile("hlt"); }
+    }
 
-    prints("WexOS Shell v1.0 - Update UI\n");
+    // --- ЗАПУСК АВТОЗАПУСКА ПОСЛЕ ВХОДА ---
+    autorun_execute();
+
+    prints("WexOS Shell v1.0\n");
     prints("Type 'help' for commands\n\n");
 
     char cmd_buf[128];
@@ -3451,7 +3792,12 @@ void _start() {
             if (c == '\n') {
                 cmd_buf[cmd_idx] = '\0';
                 newline();
-                run_command(cmd_buf);
+                
+                // Выполняем команду только если она не пустая
+                if (cmd_idx > 0) {
+                    run_command(cmd_buf);
+                }
+                
                 cmd_idx = 0;
                 history_pos = -1;
                 break;
@@ -3469,10 +3815,15 @@ void _start() {
                     strcpy(cmd_buf, command_history[history_count - 1 - history_pos]);
                     cmd_idx = strlen(cmd_buf);
 
+                    // Очищаем строку и перерисовываем
                     cursor_row = cursor_row;
-                    cursor_col = cursor_col - (cmd_idx + 2);
-                    for (int i = 0; i < COLS; i++) putchar(' ');
-                    cursor_col = cursor_col - (cmd_idx + 2);
+                    cursor_col = 0;
+                    for (int i = 0; i < COLS; i++) {
+                        putchar(' ');
+                    }
+                    
+                    cursor_row = cursor_row;
+                    cursor_col = 0;
                     prints("SystemRoot> ");
                     prints(cmd_buf);
                 }
@@ -3482,10 +3833,15 @@ void _start() {
                     strcpy(cmd_buf, command_history[history_count - 1 - history_pos]);
                     cmd_idx = strlen(cmd_buf);
 
+                    // Очищаем строку и перерисовываем
                     cursor_row = cursor_row;
-                    cursor_col = cursor_col - (cmd_idx + 2);
-                    for (int i = 0; i < COLS; i++) putchar(' ');
-                    cursor_col = cursor_col - (cmd_idx + 2);
+                    cursor_col = 0;
+                    for (int i = 0; i < COLS; i++) {
+                        putchar(' ');
+                    }
+                    
+                    cursor_row = cursor_row;
+                    cursor_col = 0;
                     prints("SystemRoot> ");
                     prints(cmd_buf);
                 } else if (history_pos == 0) {
@@ -3493,17 +3849,44 @@ void _start() {
                     cmd_idx = 0;
                     cmd_buf[0] = '\0';
 
+                    // Очищаем строку и перерисовываем
                     cursor_row = cursor_row;
-                    cursor_col = cursor_col - (cmd_idx + 2);
-                    for (int i = 0; i < COLS; i++) putchar(' ');
-                    cursor_col = cursor_col - (cmd_idx + 2);
-                    prints("> ");
+                    cursor_col = 0;
+                    for (int i = 0; i < COLS; i++) {
+                        putchar(' ');
+                    }
+                    
+                    cursor_row = cursor_row;
+                    cursor_col = 0;
+                    prints("SystemRoot> ");
                 }
             } else if (c >= 32 && c <= 126 && cmd_idx < 127) {
                 cmd_buf[cmd_idx] = c;
                 cmd_idx++;
                 cmd_buf[cmd_idx] = '\0';
                 putchar(c);
+            } else if (c == 0x01) { // ESC
+                cmd_idx = 0;
+                cmd_buf[0] = '\0';
+                
+                // Очищаем строку и перерисовываем
+                cursor_row = cursor_row;
+                cursor_col = 0;
+                for (int i = 0; i < COLS; i++) {
+                    putchar(' ');
+                }
+                
+                cursor_row = cursor_row;
+                cursor_col = 0;
+                prints("SystemRoot> ");
+            } else if (c == '\t') { // TAB
+                // Просто добавляем пробел при нажатии TAB
+                if (cmd_idx < 126) {
+                    cmd_buf[cmd_idx] = ' ';
+                    cmd_idx++;
+                    cmd_buf[cmd_idx] = '\0';
+                    putchar(' ');
+                }
             }
         }
     }
