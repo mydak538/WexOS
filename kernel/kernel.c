@@ -128,6 +128,7 @@ void autorun_command(const char* arg);
 void autorun_execute(void);
 void autorun_save_config(const char* command);
 void run_command(char* line);
+void exit_command(void);
 void trim_whitespace(char* str);
 
 /* Command history */
@@ -3078,6 +3079,12 @@ void writer_command(const char* filename) {
     clear_screen();
 }
 
+/* Exit command - clear screen and show login */
+void exit_command(void) {
+    clear_screen();
+    check_login();
+}
+
 /* Configuration screen */
 #define CONFIG_TITLE "{ SYSTEM CONFIGURATIONS }"
 #define HEADER_COLOR 0x1F
@@ -3559,7 +3566,9 @@ void show_help() {
         "color",    "colorf",   "install",  "config",   "memory",
         "cpu",      "date",     "watch",    "biosver",  "calc",
         "time",     "size",     "osver",    "history",  "format",
-        "fsck",     "cat",      "explorer", "osinfo",   "autorun",NULL
+        "fsck",     "cat",      "explorer", "osinfo",   "autorun",
+		"exit", NULL
+		
     };
     
     prints("Available commands:\n");
@@ -3666,7 +3675,7 @@ void run_command(char* line) {
     else if(strcasecmp(line, "touch") == 0) { while(*p == ' ') p++; if(*p) fs_touch(p); else prints("Usage: touch <name>\n"); }
     else if(strcasecmp(line, "rm") == 0) { while(*p == ' ') p++; if(*p) fs_rm(p); else prints("Usage: rm <name>\n"); }
 	else if(strcasecmp(line, "explorer") == 0) wexplorer_command();
-	else if(strcasecmp(line, "explorer") == 0) wexplorer_command();
+	else if(strcasecmp(line, "exit") == 0) exit_command();
 	else if(strcasecmp(line, "autorun") == 0) { 
     while(*p == ' ') p++; 
     if(*p) autorun_command(p); 
