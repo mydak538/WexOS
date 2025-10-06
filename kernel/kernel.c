@@ -922,23 +922,189 @@ int check_login() {
         return 1;
     }
 
-    char buffer[64];
-    while (1) {
-        prints("Enter password: ");
-        int len = 0;
-        char c;
-        while ((c = keyboard_getchar()) != '\n' && len < 63) {
-            buffer[len++] = c;
+    unsigned char old_color = text_color;
+    
+    // Очищаем экран и рисуем фон с озером и полем
+    clear_screen();
+    
+    // Рисуем небо (верхние 2/3 экрана)
+    for (int r = 0; r < ROWS - 4; r++) {
+        for (int c = 0; c < COLS; c++) {
+            // Градиент неба от светло-голубого к синему
+            int sky_color = 0x10 + (r * 3 / (ROWS - 4));
+            VGA[r * COLS + c] = (unsigned short)(' ' | (sky_color << 8));
         }
-        buffer[len] = '\0';
-        newline();
+    }
+    
+    // Рисуем озеро (синяя область над травой)
+    int lake_start_row = (ROWS - 4) * 2 / 3;
+    int lake_end_row = ROWS - 4;
+    for (int r = lake_start_row; r < lake_end_row; r++) {
+        for (int c = 0; c < COLS; c++) {
+            // Волны на озере - переменная интенсивность синего
+            int wave_pattern = (r + c) % 4;
+            int water_color = 0x10 + wave_pattern;
+            VGA[r * COLS + c] = (unsigned short)(' ' | (water_color << 8));
+        }
+    }
+    
+    // Рисуем поле (нижние 4 строки)
+    for (int r = ROWS - 4; r < ROWS; r++) {
+        for (int c = 0; c < COLS; c++) {
+            // Трава с текстурой - разные символы для разнообразия
+            int grass_pattern = (r + c) % 5;
+            char grass_char;
+            switch(grass_pattern) {
+                case 0: grass_char = '`'; break;
+                case 1: grass_char = ','; break;
+                case 2: grass_char = '\''; break;
+                case 3: grass_char = ' '; break;
+                default: grass_char = '.'; break;
+            }
+            int grass_color = 0x20 + (grass_pattern % 3);
+            VGA[r * COLS + c] = (unsigned short)(grass_char | (grass_color << 8));
+        }
+    }
 
-        if (strcmp(buffer, passfile->content) == 0) {
-            prints("Login successful!\n");
-            return 1;
-        } else {
-            prints("Incorrect password, try again.\n");
+    char buffer[64] = {0};
+    int buffer_len = 0;
+    int cursor_visible = 1;
+    int cursor_timer = 0;
+
+    while (1) {
+        // Область ввода без рамки
+        int area_width = 40;
+        int area_height = 6;
+        int area_x = (COLS - area_width) / 2;
+        int area_y = (ROWS - area_height) / 2;
+        
+        // Очищаем область ввода (прозрачный фон)
+        for (int r = area_y; r < area_y + area_height; r++) {
+            for (int c = area_x; c < area_x + area_width; c++) {
+                // Сохраняем фон, но делаем немного темнее для контраста
+                unsigned short current = VGA[r * COLS + c];
+                int bg_color = (current >> 8) & 0xF0;
+                if (bg_color > 0x10) {
+                    VGA[r * COLS + c] = (unsigned short)(' ' | ((bg_color - 0x10) << 8));
+                }
+            }
         }
+        
+        // Заголовок "Welcome"
+        cursor_row = area_y + 1;
+        cursor_col = area_x + (area_width - 7) / 2;
+        text_color = 0x1F; // Синий на белом
+        prints("Welcome");
+        
+        // Подпись "Enter password:"
+        cursor_row = area_y + 2;
+        cursor_col = area_x + 2;
+        text_color = 0x1F;
+        prints("Enter password:");
+        
+        // Область ввода пароля
+        int input_x = area_x + 2;
+        int input_y = area_y + 3;
+        int input_width = area_width - 4;
+        
+        // Очищаем область ввода (белый фон)
+        for (int c = input_x; c < input_x + input_width; c++) {
+            VGA[input_y * COLS + c] = (unsigned short)(' ' | (0x0F << 8));
+        }
+        
+        // Отображаем звёздочки вместо пароля
+        cursor_row = input_y;
+        cursor_col = input_x;
+        text_color = 0x0F; // Черный на белом
+        for (int i = 0; i < buffer_len; i++) {
+            putchar('*');
+        }
+        
+        // Мигающий курсор
+        cursor_timer++;
+        if (cursor_timer > 10) {
+            cursor_visible = !cursor_visible;
+            cursor_timer = 0;
+        }
+        
+        if (cursor_visible && buffer_len < 63) {
+            cursor_row = input_y;
+            cursor_col = input_x + buffer_len;
+            putchar('_');
+        }
+        
+        // Подсказки внизу области
+        cursor_row = area_y + area_height - 1;
+        cursor_col = area_x + 2;
+        text_color = 0x1F;
+        prints("Press ENTER to login");
+        
+        // Обработка ввода
+        unsigned char st = inb(0x64);
+        if (st & 1) {
+            unsigned char sc = inb(0x60);
+            
+            if ((sc & 0x80) == 0) { // Только нажатие, не отпускание
+                if (sc == 0x1C) { // Enter
+                    buffer[buffer_len] = '\0';
+                    newline();
+                    
+                    if (strcmp(buffer, passfile->content) == 0) {
+                        // Успешный вход - очищаем экран и возвращаемся
+                        text_color = old_color;
+                        clear_screen();
+                        prints("Login successful!\n");
+                        return 1;
+                    } else {
+                        // Неверный пароль - показываем сообщение об ошибке
+                        cursor_row = area_y + 4;
+                        cursor_col = area_x + 2;
+                        text_color = 0x4F; // Красный фон, белый текст
+                        
+                        // Очищаем область сообщения
+                        for (int c = area_x + 2; c < area_x + area_width - 2; c++) {
+                            VGA[(area_y + 4) * COLS + c] = (unsigned short)(' ' | (0x4F << 8));
+                        }
+                        
+                        cursor_row = area_y + 4;
+                        cursor_col = area_x + 2;
+                        prints("Incorrect password, try again.");
+                        
+                        // Очищаем буфер
+                        buffer_len = 0;
+                        buffer[0] = '\0';
+                        
+                        // Ждём немного перед очисткой сообщения
+                        for (volatile int i = 0; i < 1000000; i++);
+                    }
+                } else if (sc == 0x0E) { // Backspace
+                    if (buffer_len > 0) {
+                        buffer_len--;
+                        buffer[buffer_len] = '\0';
+                    }
+                } else {
+                    // Обычные символы
+                    static const char t[128] = {
+                        0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b', '\t',
+                        'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', 0,
+                        'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\',
+                        'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, '*', 0, ' '
+                    };
+                    
+                    if (sc < 128 && t[sc] && buffer_len < 63) {
+                        char c = t[sc];
+                        if (c >= 32 && c <= 126) { // Только печатные символы
+                            buffer[buffer_len] = c;
+                            buffer_len++;
+                            buffer[buffer_len] = '\0';
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Небольшая задержка для плавности
+        for (volatile int i = 0; i < 10000; i++);
     }
 }
 
@@ -2947,19 +3113,22 @@ void draw_box(int x1, int y1, int x2, int y2, int color) {
     unsigned char old_color = text_color;
     text_color = color;
     
-    cursor_row = y1; cursor_col = x1; putchar(0xC9);
-    cursor_row = y1; cursor_col = x2; putchar(0xBB);
-    cursor_row = y2; cursor_col = x1; putchar(0xC8);
-    cursor_row = y2; cursor_col = x2; putchar(0xBC);
+    // Углы
+    cursor_row = y1; cursor_col = x1; putchar(0xC9); // ┌
+    cursor_row = y1; cursor_col = x2; putchar(0xBB); // ┐
+    cursor_row = y2; cursor_col = x1; putchar(0xC8); // └
+    cursor_row = y2; cursor_col = x2; putchar(0xBC); // ┘
     
+    // Горизонтальные линии
     for (int x = x1 + 1; x < x2; x++) {
-        cursor_row = y1; cursor_col = x; putchar(0xCD);
-        cursor_row = y2; cursor_col = x; putchar(0xCD);
+        cursor_row = y1; cursor_col = x; putchar(0xCD); // ─
+        cursor_row = y2; cursor_col = x; putchar(0xCD); // ─
     }
     
+    // Вертикальные линии
     for (int y = y1 + 1; y < y2; y++) {
-        cursor_row = y; cursor_col = x1; putchar(0xBA);
-        cursor_row = y; cursor_col = x2; putchar(0xBA);
+        cursor_row = y; cursor_col = x1; putchar(0xBA); // │
+        cursor_row = y; cursor_col = x2; putchar(0xBA); // │
     }
     
     text_color = old_color;
