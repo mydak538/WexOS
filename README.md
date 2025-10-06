@@ -13,7 +13,7 @@ WexOS - это самодельная операционная система д
 - **Утилиты**: Текстовый редактор, калькулятор, просмотрщик памяти
 - ![Writer WexOS](screen/1.png)
 
-- ##Comfortable PC configuration on WexOS
+- ## Comfortable PC configuration on WexOS
  **Processor: Pentium III 500 MHz**
  **Memory: 128 MB RAM**
  **Storage: 500 MB**
