@@ -2582,6 +2582,8 @@ void install_disk() {
         fs_rm("SystemRoot");
 		fs_rm("filesystem");
 		fs_rm("boot");
+		fs_rm("mnt");
+		fs_rm("temp");
 
         prints("Creating system directories...\n");
         fs_mkdir("home");
@@ -2602,8 +2604,18 @@ void install_disk() {
 		fs_mkdir("SystemRoot/config");
 		fs_mkdir("filesystem");
 		fs_mkdir("filesystem/WexFs");
-		
-		
+		fs_mkdir("mnt");
+		fs_mkdir("mnt/rootdisk");
+		fs_mkdir("mnt/Z:");
+		fs_mkdir("temp");
+		fs_mkdir("temp/null");
+		fs_mkdir("dev");
+		fs_mkdir("dev/usb");
+		fs_mkdir("dev/usb 3.0");
+		fs_mkdir("dev/usb 2.0");
+		fs_mkdir("dev/usb 1.0");
+		fs_mkdir("dev/CDROOM");
+		fs_mkdir("dev/floppy");
 
         prints("Copying system files...\n");
         fs_touch("SystemRoot/bin/taskmgr.bin");
@@ -3428,8 +3440,6 @@ void config_command() {
     clear_screen();
 }
 
-
-
 void watch_command() {
     unsigned char old_color = text_color;
     text_color = 0x0A; // Зеленый цвет
@@ -3795,7 +3805,6 @@ void memory_command() {
     }
 }
 
-/* Добавьте эту функцию где-нибудь перед _start() */
 void show_loading_screen(void) {
     unsigned char old_color = text_color;
     
