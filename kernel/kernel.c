@@ -2583,7 +2583,7 @@ void install_disk() {
 		fs_rm("filesystem");
 		fs_rm("boot");
 		fs_rm("mnt");
-		fs_rm("temp");
+		fs_rm("tmp");
 
         prints("Creating system directories...\n");
         fs_mkdir("home");
