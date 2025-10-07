@@ -73,6 +73,11 @@ void itoa(int value, char* str, int base);
 void coreview_command(void);
 void putchar(char ch);
 char keyboard_getchar();
+void reboot_system();
+void shutdown_system();
+void draw_button_cursor(int button_area_x, int button_area_y, int selected_button);
+void draw_button_highlight(int button_area_x, int button_area_y, int selected_button);
+void update_buttons_display(int button_area_x, int button_area_y, int selected_button, int focus_on_buttons);
 int check_login();
 void fill_screen(int color);
 void draw_rect(int x, int y, int w, int h, int color);
@@ -913,10 +918,46 @@ int check_login() {
         }
     }
 
+    // Рисуем кнопки в правом верхнем углу (меньшие и отдельные)
+    int button_area_x = COLS - 22;  // Уменьшили ширину области
+    int button_area_y = 2;
+    
+    // Отдельные фоны для каждой кнопки (не сплошной прямоугольник)
+    // Фон для кнопки Reboot
+    for (int r = button_area_y; r < button_area_y + 2; r++) {
+        for (int c = button_area_x + 2; c < button_area_x + 8; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (0x70 << 8));
+        }
+    }
+    
+    // Фон для кнопки Shutdown
+    for (int r = button_area_y; r < button_area_y + 2; r++) {
+        for (int c = button_area_x + 12; c < button_area_x + 20; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (0x70 << 8));
+        }
+    }
+    
+    // Кнопки без скобок с увеличенным расстоянием
+    cursor_row = button_area_y;
+    cursor_col = button_area_x + 2;
+    text_color = 0x70; // Черный на сером
+    prints("Reboot");
+    
+    cursor_row = button_area_y;
+    cursor_col = button_area_x + 12;
+    prints("Shutdown");
+    
+    // Курсор для переключения стрелочками
+    int selected_button = 0; // 0 - Reboot, 1 - Shutdown
+    
+    // Рисуем начальное выделение
+    draw_button_highlight(button_area_x, button_area_y, selected_button);
+
     char buffer[64] = {0};
     int buffer_len = 0;
     int cursor_visible = 1;
     int cursor_timer = 0;
+    int focus_on_buttons = 1; // 1 - фокус на кнопках, 0 - фокус на поле ввода
 
     while (1) {
         // Область ввода без рамки
@@ -967,14 +1008,14 @@ int check_login() {
             putchar('*');
         }
         
-        // Мигающий курсор
+        // Мигающий курсор в поле ввода (только если фокус там)
         cursor_timer++;
         if (cursor_timer > 10) {
             cursor_visible = !cursor_visible;
             cursor_timer = 0;
         }
         
-        if (cursor_visible && buffer_len < 63) {
+        if (cursor_visible && buffer_len < 63 && !focus_on_buttons) {
             cursor_row = input_y;
             cursor_col = input_x + buffer_len;
             putchar('_');
@@ -984,7 +1025,14 @@ int check_login() {
         cursor_row = area_y + area_height - 1;
         cursor_col = area_x + 2;
         text_color = 0x1F;
-        prints("Press ENTER to login");
+        if (focus_on_buttons) {
+            prints("Use arrows to select, ENTER to activate");
+        } else {
+            prints("Press ENTER to login, TAB to switch focus");
+        }
+        
+        // Обновляем кнопки с выделением
+        update_buttons_display(button_area_x, button_area_y, selected_button, focus_on_buttons);
         
         // Обработка ввода
         unsigned char st = inb(0x64);
@@ -993,57 +1041,85 @@ int check_login() {
             
             if ((sc & 0x80) == 0) { // Только нажатие, не отпускание
                 if (sc == 0x1C) { // Enter
-                    buffer[buffer_len] = '\0';
-                    newline();
-                    
-                    if (strcmp(buffer, passfile->content) == 0) {
-                        // Успешный вход - очищаем экран и возвращаемся
-                        text_color = old_color;
-                        clear_screen();
-                        prints("Login successful!\n");
-                        return 1;
-                    } else {
-                        // Неверный пароль - показываем сообщение об ошибке
-                        cursor_row = area_y + 4;
-                        cursor_col = area_x + 2;
-                        text_color = 0x4F; // Красный фон, белый текст
-                        
-                        // Очищаем область сообщения
-                        for (int c = area_x + 2; c < area_x + area_width - 2; c++) {
-                            VGA[(area_y + 4) * COLS + c] = (unsigned short)(' ' | (0x4F << 8));
+                    if (focus_on_buttons) {
+                        // Активируем выбранную кнопку
+                        if (selected_button == 0) { // Reboot
+                            prints("\nRebooting...");
+                            reboot_system();
+                        } else { // Shutdown
+                            prints("\nShutting down...");
+                            shutdown_system();
                         }
+                    } else {
+                        // Обработка входа в систему
+                        buffer[buffer_len] = '\0';
+                        newline();
                         
-                        cursor_row = area_y + 4;
-                        cursor_col = area_x + 2;
-                        prints("Incorrect password, try again.");
-                        
-                        // Очищаем буфер
-                        buffer_len = 0;
-                        buffer[0] = '\0';
-                        
-                        // Ждём немного перед очисткой сообщения
-                        for (volatile int i = 0; i < 1000000; i++);
+                        if (strcmp(buffer, passfile->content) == 0) {
+                            // Успешный вход - очищаем экран и возвращаемся
+                            text_color = old_color;
+                            clear_screen();
+                            prints("Login successful!\n");
+                            return 1;
+                        } else {
+                            // Неверный пароль - показываем сообщение об ошибке
+                            cursor_row = area_y + 4;
+                            cursor_col = area_x + 2;
+                            text_color = 0x4F; // Красный фон, белый текст
+                            
+                            // Очищаем область сообщения
+                            for (int c = area_x + 2; c < area_x + area_width - 2; c++) {
+                                VGA[(area_y + 4) * COLS + c] = (unsigned short)(' ' | (0x4F << 8));
+                            }
+                            
+                            cursor_row = area_y + 4;
+                            cursor_col = area_x + 2;
+                            prints("Incorrect password, try again.");
+                            
+                            // Очищаем буфер
+                            buffer_len = 0;
+                            buffer[0] = '\0';
+                            
+                            // Ждём немного перед очисткой сообщения
+                            for (volatile int i = 0; i < 1000000; i++);
+                        }
                     }
                 } else if (sc == 0x0E) { // Backspace
-                    if (buffer_len > 0) {
+                    if (!focus_on_buttons && buffer_len > 0) {
                         buffer_len--;
                         buffer[buffer_len] = '\0';
                     }
+                } else if (sc == 0x0F) { // Tab - переключение фокуса
+                    focus_on_buttons = !focus_on_buttons;
+                } else if (sc == 0x4B) { // Стрелка влево
+                    if (focus_on_buttons) {
+                        selected_button = 0;
+                    }
+                } else if (sc == 0x4D) { // Стрелка вправо
+                    if (focus_on_buttons) {
+                        selected_button = 1;
+                    }
+                } else if (sc == 0x48) { // Стрелка вверх
+                    focus_on_buttons = 1;
+                } else if (sc == 0x50) { // Стрелка вниз
+                    focus_on_buttons = 0;
                 } else {
-                    // Обычные символы
-                    static const char t[128] = {
-                        0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b', '\t',
-                        'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', 0,
-                        'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\',
-                        'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, '*', 0, ' '
-                    };
-                    
-                    if (sc < 128 && t[sc] && buffer_len < 63) {
-                        char c = t[sc];
-                        if (c >= 32 && c <= 126) { // Только печатные символы
-                            buffer[buffer_len] = c;
-                            buffer_len++;
-                            buffer[buffer_len] = '\0';
+                    // Обычные символы (только если фокус на поле ввода)
+                    if (!focus_on_buttons) {
+                        static const char t[128] = {
+                            0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b', '\t',
+                            'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', 0,
+                            'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\',
+                            'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, '*', 0, ' '
+                        };
+                        
+                        if (sc < 128 && t[sc] && buffer_len < 63) {
+                            char c = t[sc];
+                            if (c >= 32 && c <= 126) { // Только печатные символы
+                                buffer[buffer_len] = c;
+                                buffer_len++;
+                                buffer[buffer_len] = '\0';
+                            }
                         }
                     }
                 }
@@ -1053,6 +1129,70 @@ int check_login() {
         // Небольшая задержка для плавности
         for (volatile int i = 0; i < 10000; i++);
     }
+}
+
+void draw_button_highlight(int button_area_x, int button_area_y, int selected_button) {
+    int button_start_x, button_width;
+    
+    if (selected_button == 0) {
+        // Reboot button
+        button_start_x = button_area_x + 2;
+        button_width = 6; // "Reboot" = 6 символов
+    } else {
+        // Shutdown button
+        button_start_x = button_area_x + 12;
+        button_width = 8; // "Shutdown" = 8 символов
+    }
+    
+    // Закрашиваем область кнопки красным фоном (только саму кнопку)
+    for (int c = button_start_x; c < button_start_x + button_width; c++) {
+        VGA[button_area_y * COLS + c] = (unsigned short)(' ' | (0x47 << 8));
+        VGA[(button_area_y + 1) * COLS + c] = (unsigned short)(' ' | (0x47 << 8));
+    }
+}
+
+void update_buttons_display(int button_area_x, int button_area_y, int selected_button, int focus_on_buttons) {
+    // Восстанавливаем фон кнопок (отдельные области для каждой кнопки)
+    
+    // Фон для кнопки Reboot
+    for (int r = button_area_y; r < button_area_y + 2; r++) {
+        for (int c = button_area_x + 2; c < button_area_x + 8; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (0x70 << 8));
+        }
+    }
+    
+    // Фон для кнопки Shutdown
+    for (int r = button_area_y; r < button_area_y + 2; r++) {
+        for (int c = button_area_x + 12; c < button_area_x + 20; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (0x70 << 8));
+        }
+    }
+    
+    // Если фокус на кнопках, выделяем выбранную кнопку красным
+    if (focus_on_buttons) {
+        draw_button_highlight(button_area_x, button_area_y, selected_button);
+    }
+    
+    // Рисуем текст кнопок
+    cursor_row = button_area_y;
+    
+    // Reboot button
+    cursor_col = button_area_x + 2;
+    if (focus_on_buttons && selected_button == 0) {
+        text_color = 0x47; // Белый на красном
+    } else {
+        text_color = 0x70; // Черный на сером
+    }
+    prints("Reboot");
+    
+    // Shutdown button
+    cursor_col = button_area_x + 12;
+    if (focus_on_buttons && selected_button == 1) {
+        text_color = 0x47; // Белый на красном
+    } else {
+        text_color = 0x70; // Черный на сером
+    }
+    prints("Shutdown");
 }
 
 /* Function prototypes */
@@ -1909,10 +2049,24 @@ void reboot_system() {
 
 void shutdown_system() {
     prints("Shutdown...\n");
-    outb(0x604, 0x2000 & 0xFF);
-    outb(0x604, (0x2000 >> 8) & 0xFF);
-    outb(0x400, 0x00);
-    while(1) { __asm__ volatile("hlt"); }
+    
+    // Попытка ACPI выключения через порт 0x604
+    outw(0x604, 0x2000);
+    
+    // Альтернативный ACPI метод
+    outw(0xB004, 0x2000);
+    outw(0x4004, 0x3400);
+    
+    // Если ACPI не работает, пробуем APM
+    outw(0x5304, 0x0000);  // Отключить APM
+    outw(0x5301, 0x0000);  // Установить устройство
+    outw(0x5308, 0x0001);  // Установить версию
+    outw(0x5307, 0x0003);  // Выключить систему
+    
+    // Запасной вариант
+    for(;;) {
+        __asm__ volatile("hlt; cli");
+    }
 }
 
 /* Processes simulation */
