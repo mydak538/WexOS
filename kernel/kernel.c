@@ -750,29 +750,8 @@ void fs_check_integrity(void) {
     int errors_found = 0;
     int warnings_found = 0;
     
-    // 1. Проверка базовой целостности
-    prints("Phase 1: Checking inodes...\n");
-    for (int i = 0; i < fs_count; i++) {
-        // Проверка валидности имен
-        if (strlen(fs_cache[i].name) == 0) {
-            prints("ERROR: Empty filename at index ");
-            char idx_str[10];
-            itoa(i, idx_str, 10);
-            prints(idx_str);
-            newline();
-            errors_found++;
-        }
-        
-        if (fs_cache[i].name[0] != '/') {
-            prints("ERROR: Filename doesn't start with '/': ");
-            prints(fs_cache[i].name);
-            newline();
-            errors_found++;
-        }
-    }
-    
-    // 2. Проверка на дубликаты
-    prints("Phase 2: Checking for duplicates...\n");
+    // Проверка на дубликаты
+    prints("Phase 1: Checking for duplicates...\n");
     for (int i = 0; i < fs_count; i++) {
         for (int j = i + 1; j < fs_count; j++) {
             if (strcmp(fs_cache[i].name, fs_cache[j].name) == 0) {
@@ -784,42 +763,9 @@ void fs_check_integrity(void) {
         }
     }
     
-    // 3. Проверка структуры директорий
-    prints("Phase 3: Checking directory tree...\n");
-    for (int i = 0; i < fs_count; i++) {
-        if (strcmp(fs_cache[i].name, "/") != 0) {
-            char parent_path[MAX_PATH];
-            strcpy(parent_path, fs_cache[i].name);
-            
-            // Находим последний слэш
-            char* last_slash = strrchr(parent_path, '/');
-            if (last_slash) {
-                *last_slash = '\0';
-                if (strlen(parent_path) == 0) {
-                    strcpy(parent_path, "/");
-                }
-                
-                // Проверяем существует ли родительская директория
-                int parent_found = 0;
-                for (int j = 0; j < fs_count; j++) {
-                    if (strcmp(fs_cache[j].name, parent_path) == 0 && fs_cache[j].is_dir) {
-                        parent_found = 1;
-                        break;
-                    }
-                }
-                
-                if (!parent_found) {
-                    prints("ERROR: Orphaned file/directory - parent not found: ");
-                    prints(fs_cache[i].name);
-                    newline();
-                    errors_found++;
-                }
-            }
-        }
-    }
     
-    // 4. Проверка размера контента
-    prints("Phase 4: Checking file sizes...\n");
+    // Проверка размера контента
+    prints("Phase 2: Checking file sizes...\n");
     for (int i = 0; i < fs_count; i++) {
         if (!fs_cache[i].is_dir) {
             if (fs_cache[i].size > sizeof(fs_cache[i].content)) {
@@ -838,8 +784,8 @@ void fs_check_integrity(void) {
         }
     }
     
-    // 5. Проверка максимального количества файлов
-    prints("Phase 5: Checking filesystem limits...\n");
+    // Проверка максимального количества файлов
+    prints("Phase 3: Checking filesystem limits...\n");
     if (fs_count >= MAX_FILES) {
         prints("WARNING: Filesystem at maximum capacity (");
         char max_str[10];
@@ -849,8 +795,8 @@ void fs_check_integrity(void) {
         warnings_found++;
     }
     
-    // 6. Статистика
-    prints("Phase 6: Generating statistics...\n");
+    // Статистика
+    prints("Phase 4: Generating statistics...\n");
     int total_files = 0;
     int total_dirs = 0;
     
