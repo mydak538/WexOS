@@ -1,3 +1,5 @@
+#include <stdint.h>
+
 #define MULTIBOOT_MAGIC 0x1BADB002
 #define MULTIBOOT_FLAGS 0
 
@@ -11,19 +13,29 @@ typedef unsigned char u8;
 #define SECTOR_SIZE 512
 #define FS_SECTOR_START 1
 #define MAX_FILES 64
+#define MAX_HISTORY 10
 
-typedef struct { 
-    char name[MAX_PATH];
-    int is_dir; 
-    char content[256]; 
-    u32 next_sector;
-    u32 size;
-} FSNode;
+#define BLACK 0x000000
+#define WHITE 0xFFFFFF
+#define RED 0xFF0000
+#define BLUE 0x0000FF
+
+#define KEY_UP    0x48
+#define KEY_DOWN  0x50
+#define KEY_LEFT  0x4B
+#define KEY_RIGHT 0x4D
+#define KEY_ENTER 0x1C
 
 /* Function prototypes */
 void itoa(int value, char* str, int base);
 void putchar(char ch);
 char keyboard_getchar();
+void reboot_system();
+void shutdown_system();
+void fill_screen(int color);
+void draw_rect(int x, int y, int w, int h, int color);
+void draw_text(int x, int y, char* text, int color);
+unsigned char get_key();
 void memcpy(void* dst, void* src, int len);
 int strcmp(const char* a, const char* b);
 int strlen(const char* s);
@@ -48,13 +60,19 @@ void fs_mkdir(const char* name);
 void fs_touch(const char* name);
 void fs_rm(const char* name);
 void fs_cd(const char* name);
-FSNode* fs_find_file(const char* name);
 void fs_copy(const char* src_name, const char* dest_name);
 void fs_size(const char* name);
 void fs_format(void);
 void fs_check_integrity(void);
 void fsck_command(void);
 void fs_cat(const char* filename);
+void run_command(char* line);
+void trim_whitespace(char* str);
+void show_recovery_menu(void);
+
+/* Command history */
+int history_count = 0;
+int history_index = 0;
 
 /* Multiboot header */
 typedef struct {
@@ -103,10 +121,21 @@ static inline void outw(unsigned short port, u16 val) {
 #define ATA_STATUS 0x1F7
 #define ATA_CMD 0x1F7
 
+typedef struct { 
+    char name[MAX_PATH];
+    int is_dir; 
+    char content[256]; 
+    u32 next_sector;
+    u32 size;
+} FSNode;
+
 FSNode fs_cache[MAX_FILES];
 int fs_count = 0;
 char current_dir[MAX_PATH] = "/";
 int fs_dirty = 0;
+
+/* Command history */
+char command_history[MAX_HISTORY][128];
 
 /* ATA functions */
 void ata_wait_ready() {
@@ -335,7 +364,7 @@ void fs_touch(const char* name) {
 
     strcpy(fs_cache[fs_count].name, full_path);
     fs_cache[fs_count].is_dir = 0;
-    fs_cache[fs_count].content[0] = '\0';
+    fs_cache[fs_cache[fs_count].content[0] = '\0'];
     fs_cache[fs_count].next_sector = 0;
     fs_cache[fs_count].size = 0;
     fs_count++;
@@ -658,26 +687,7 @@ void fs_check_integrity(void) {
     int errors_found = 0;
     int warnings_found = 0;
     
-    prints("Phase 1: Checking inodes...\n");
-    for (int i = 0; i < fs_count; i++) {
-        if (strlen(fs_cache[i].name) == 0) {
-            prints("ERROR: Empty filename at index ");
-            char idx_str[10];
-            itoa(i, idx_str, 10);
-            prints(idx_str);
-            newline();
-            errors_found++;
-        }
-        
-        if (fs_cache[i].name[0] != '/') {
-            prints("ERROR: Filename doesn't start with '/': ");
-            prints(fs_cache[i].name);
-            newline();
-            errors_found++;
-        }
-    }
-    
-    prints("Phase 2: Checking for duplicates...\n");
+    prints("Phase 1: Checking for duplicates...\n");
     for (int i = 0; i < fs_count; i++) {
         for (int j = i + 1; j < fs_count; j++) {
             if (strcmp(fs_cache[i].name, fs_cache[j].name) == 0) {
@@ -689,38 +699,7 @@ void fs_check_integrity(void) {
         }
     }
     
-    prints("Phase 3: Checking directory tree...\n");
-    for (int i = 0; i < fs_count; i++) {
-        if (strcmp(fs_cache[i].name, "/") != 0) {
-            char parent_path[MAX_PATH];
-            strcpy(parent_path, fs_cache[i].name);
-            
-            char* last_slash = strrchr(parent_path, '/');
-            if (last_slash) {
-                *last_slash = '\0';
-                if (strlen(parent_path) == 0) {
-                    strcpy(parent_path, "/");
-                }
-                
-                int parent_found = 0;
-                for (int j = 0; j < fs_count; j++) {
-                    if (strcmp(fs_cache[j].name, parent_path) == 0 && fs_cache[j].is_dir) {
-                        parent_found = 1;
-                        break;
-                    }
-                }
-                
-                if (!parent_found) {
-                    prints("ERROR: Orphaned file/directory - parent not found: ");
-                    prints(fs_cache[i].name);
-                    newline();
-                    errors_found++;
-                }
-            }
-        }
-    }
-    
-    prints("Phase 4: Checking file sizes...\n");
+    prints("Phase 2: Checking file sizes...\n");
     for (int i = 0; i < fs_count; i++) {
         if (!fs_cache[i].is_dir) {
             if (fs_cache[i].size > sizeof(fs_cache[i].content)) {
@@ -739,7 +718,7 @@ void fs_check_integrity(void) {
         }
     }
     
-    prints("Phase 5: Checking filesystem limits...\n");
+    prints("Phase 3: Checking filesystem limits...\n");
     if (fs_count >= MAX_FILES) {
         prints("WARNING: Filesystem at maximum capacity (");
         char max_str[10];
@@ -749,7 +728,7 @@ void fs_check_integrity(void) {
         warnings_found++;
     }
     
-    prints("Phase 6: Generating statistics...\n");
+    prints("Phase 4: Generating statistics...\n");
     int total_files = 0;
     int total_dirs = 0;
     
@@ -1018,6 +997,55 @@ char keyboard_getchar() {
             if(sc < 128 && t[sc]) {
                 return shift_pressed ? t_shift[sc] : t[sc];
             }
+            if (sc == 0x43) return '\xF9';
+        }
+    }
+}
+
+char getch_with_arrows() {
+    static unsigned char extended = 0;
+    while(1) {
+        unsigned char st = inb(0x64);
+        if (st & 1) {
+            unsigned char sc = inb(0x60);
+            if ((sc & 0x80) != 0) {
+                sc &= 0x7F;
+                if (sc == 0x2A || sc == 0x36) shift_pressed = 0;
+                extended = 0;
+                continue;
+            }
+            if (sc == 0x2A || sc == 0x36) {
+                shift_pressed = 1;
+                continue;
+            }
+            if (sc == 0xE0) {
+                extended = 1;
+                continue;
+            }
+            if (extended) {
+                extended = 0;
+                if (sc == 0x48) return 'U';
+                if (sc == 0x50) return 'D';
+                if (sc == 0x4B) return 'L';
+                if (sc == 0x4D) return 'R';
+                continue;
+            }
+            static const char t[128] = {
+                0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b', '\t',
+                'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', 0,
+                'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\',
+                'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0, '*', 0, ' '
+            };
+            static const char t_shift[128] = {
+                0, 27, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '\b', '\t',
+                'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n', 0,
+                'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~', 0, '|',
+                'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0, '*', 0, ' '
+            };
+            if (sc < 128 && t[sc]) {
+                return shift_pressed ? t_shift[sc] : t[sc];
+            }
+            if (sc == 0x43) return '\xF9';
         }
     }
 }
@@ -1029,28 +1057,129 @@ void reboot_system() {
     while(1) { __asm__ volatile("hlt"); }
 }
 
-/* Command help */
+void shutdown_system() {
+    prints("Shutdown...\n");
+    outw(0x604, 0x2000);
+    outw(0xB004, 0x2000);
+    outw(0x4004, 0x3400);
+    outw(0x5304, 0x0000);
+    outw(0x5301, 0x0000);
+    outw(0x5308, 0x0001);
+    outw(0x5307, 0x0003);
+    for(;;) {
+        __asm__ volatile("hlt; cli");
+    }
+}
+
+/* Graphics functions for recovery mode */
+void fill_screen(int color) {
+    for(int r = 0; r < ROWS; r++) {
+        for(int c = 0; c < COLS; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (color << 8));
+        }
+    }
+}
+
+void draw_rect(int x, int y, int w, int h, int color) {
+    for(int r = y; r < y + h; r++) {
+        for(int c = x; c < x + w; c++) {
+            if(r >= 0 && r < ROWS && c >= 0 && c < COLS) {
+                VGA[r * COLS + c] = (unsigned short)(' ' | (color << 8));
+            }
+        }
+    }
+}
+
+void draw_text(int x, int y, char* text, int color) {
+    unsigned char old_color = text_color;
+    text_color = color;
+    cursor_row = y;
+    cursor_col = x;
+    prints(text);
+    text_color = old_color;
+}
+
+unsigned char get_key() {
+    while (!(inb(0x64) & 0x01));
+    return inb(0x60);
+}
+
+/* Command history function */
+void history_command() {
+    prints("Command History:\n");
+    for (int i = 0; i < history_count; i++) {
+        char index_str[10];
+        itoa(i + 1, index_str, 10);
+        prints(index_str);
+        prints(": ");
+        prints(command_history[i]);
+        newline();
+    }
+}
+
+void recovery_pass() {
+fs_rm("SystemRoot/config/pass.cfg");
+prints("The password has been deleted! Or absent.");
+}
+
+/* Case-insensitive string comparison */
+int strcasecmp(const char* a, const char* b) {
+    while (*a && *b) {
+        char ca = *a;
+        char cb = *b;
+        if (ca >= 'a' && ca <= 'z') ca = ca - 'a' + 'A';
+        if (cb >= 'a' && cb <= 'z') cb = cb - 'a' + 'A';
+        if (ca != cb) return ca - cb;
+        a++;
+        b++;
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+/* Command help for recovery mode */
 void show_help() {
+    unsigned char old_color = text_color;
+    text_color = 0x0A;
+    
     const char* commands[] = {
-        "help",     "reboot",   "clear",    "ls",       "cd",       
-        "mkdir",    "rm",       "touch",    "copy",     "ps",       
-        "kill",     "format",   "fsck",     "cat",      "size",     
-        NULL
+        "help",     "reboot",   "shutdown", "clear",
+        "ls",       "cd",       "mkdir",    "rm",       
+        "touch",    "copy",     "cat",      "fsck",
+        "format",   "size",     "history",  "exit",
+        "writer",   "removepass",   NULL
     };
     
-    prints("Available recovery commands:\n");
-    prints("===========================\n\n");
+    prints("Recovery Mode Commands:\n");
+    prints("======================\n\n");
     
-    for (int i = 0; commands[i] != NULL; i++) {
+    int total_commands = 0;
+    while (commands[total_commands] != NULL) {
+        total_commands++;
+    }
+    
+    int commands_per_column = (total_commands + 1) / 2;
+    int col_width = 15;
+    
+    for (int i = 0; i < commands_per_column; i++) {
+        cursor_col = 2;
         prints(commands[i]);
-        if (commands[i + 1] != NULL) {
-            prints(", ");
+        
+        int spaces = col_width - strlen(commands[i]);
+        for (int s = 0; s < spaces; s++) {
+            putchar(' ');
         }
-        if (i % 5 == 4) newline();
+        
+        if (i + commands_per_column < total_commands) {
+            prints(commands[i + commands_per_column]);
+        }
+        
+        newline();
     }
     
     newline();
-    prints("\nThese are recovery mode commands only.\n");
+    prints("These are all commands for recovery mode.\n");
+    
+    text_color = old_color;
 }
 
 /* Trim whitespace */
@@ -1076,79 +1205,232 @@ void split_args(char* args, char** arg1, char** arg2) {
     }
 }
 
-/* Processes simulation */
-typedef struct {
-    char name[32];
-    int pid;
-} Process;
-
-Process processes[10];
-int process_count = 0;
-
-void init_processes() {
-    strcpy(processes[0].name, "RECOVERY.BIN");
-    processes[0].pid = 1;
-	strcpy(processes[0].name, "SHELL.BIN");
-    processes[0].pid = 2;
-    process_count = 2;
-}
-
-void ps_command() {
-    prints("PID\tName\n");
-    for (int i = 0; i < process_count; i++) {
-        char pid_str[10];
-        itoa(processes[i].pid, pid_str, 10);
-        prints(pid_str);
-        putchar('\t');
-        prints(processes[i].name);
+void writer_command(const char* filename) {
+    FSNode* file = fs_find_file(filename);
+    if (!file) {
+        prints("Error: File not found: ");
+        prints(filename);
         newline();
+        return;
     }
-}
-
-void kill_command(const char* arg) {
-    int found = 0;
-    for (int i = 0; i < process_count; i++) {
-        if (strcmp(processes[i].name, arg) == 0 || atoi(arg) == processes[i].pid) {
-            for (int j = i; j < process_count - 1; j++) {
-                processes[j] = processes[j + 1];
-            }
-            process_count--;
-            found = 1;
-            prints("Process killed: ");
-            prints(arg);
-            newline();
-            break;
+    
+    char content[256];
+    strcpy(content, file->content);
+    int content_len = strlen(content);
+    int cursor_pos = content_len;
+    
+    unsigned char old_color = text_color;
+    int exit_editor = 0;
+    int save_file = 0;
+    
+    text_color = 0x70;
+    clear_screen();
+    
+    // Верхняя строка с названием файла
+    for (int c = 0; c < COLS; c++) {
+        VGA[0 * COLS + c] = (unsigned short)(' ' | (text_color << 8));
+    }
+    cursor_row = 0;
+    cursor_col = (COLS - strlen(filename) - 12) / 2;
+    prints("File: ");
+    prints(filename);
+    prints(" - Writer");
+    
+    // Нижняя строка с подсказками
+    text_color = 0x70;
+    cursor_row = ROWS - 1;
+    cursor_col = 5;
+    prints("F9: Save  ESC: Exit");
+    
+    // Основная область редактирования
+    text_color = 0x1F;
+    for (int r = 1; r < ROWS - 1; r++) {
+        for (int c = 0; c < COLS; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (text_color << 8));
         }
     }
-    if (!found) {
-        prints("Process not found: ");
-        prints(arg);
-        newline();
+    
+    // Отображаем начальное содержимое
+    cursor_row = 2;
+    cursor_col = 2;
+    for (int i = 0; i < content_len; i++) {
+        if (content[i] == '\n') {
+            cursor_row++;
+            cursor_col = 2;
+        } else {
+            putchar(content[i]);
+        }
     }
+    
+    // Основной цикл редактора
+    while (!exit_editor) {
+        cursor_row = 2 + (cursor_pos / (COLS - 4));
+        cursor_col = 2 + (cursor_pos % (COLS - 4));
+        
+        char c = keyboard_getchar();
+        
+        switch (c) {
+            case 27: // ESC
+                exit_editor = 1;
+                break;
+                
+            case '\n': // Enter
+                if (content_len < 255) {
+                    for (int i = content_len; i > cursor_pos; i--) {
+                        content[i] = content[i-1];
+                    }
+                    content[cursor_pos] = '\n';
+                    content_len++;
+                    cursor_pos++;
+                    content[content_len] = '\0';
+                    
+                    // Перерисовываем содержимое
+                    text_color = 0x1F;
+                    for (int r = 1; r < ROWS - 1; r++) {
+                        for (int c = 0; c < COLS; c++) {
+                            VGA[r * COLS + c] = (unsigned short)(' ' | (text_color << 8));
+                        }
+                    }
+                    cursor_row = 2;
+                    cursor_col = 2;
+                    for (int i = 0; i < content_len; i++) {
+                        if (content[i] == '\n') {
+                            cursor_row++;
+                            cursor_col = 2;
+                        } else {
+                            putchar(content[i]);
+                        }
+                    }
+                }
+                break;
+                
+            case '\b': // Backspace
+                if (cursor_pos > 0 && content_len > 0) {
+                    for (int i = cursor_pos - 1; i < content_len; i++) {
+                        content[i] = content[i+1];
+                    }
+                    content_len--;
+                    cursor_pos--;
+                    content[content_len] = '\0';
+                    
+                    // Перерисовываем содержимое
+                    text_color = 0x1F;
+                    for (int r = 1; r < ROWS - 1; r++) {
+                        for (int c = 0; c < COLS; c++) {
+                            VGA[r * COLS + c] = (unsigned short)(' ' | (text_color << 8));
+                        }
+                    }
+                    cursor_row = 2;
+                    cursor_col = 2;
+                    for (int i = 0; i < content_len; i++) {
+                        if (content[i] == '\n') {
+                            cursor_row++;
+                            cursor_col = 2;
+                        } else {
+                            putchar(content[i]);
+                        }
+                    }
+                }
+                break;
+                
+            case '\xF9': // F9 - Save
+                save_file = 1;
+                exit_editor = 1;
+                break;
+                
+            default: // Обычные символы
+                if (c >= 32 && c <= 126 && content_len < 255) {
+                    for (int i = content_len; i > cursor_pos; i--) {
+                        content[i] = content[i-1];
+                    }
+                    content[cursor_pos] = c;
+                    content_len++;
+                    cursor_pos++;
+                    content[content_len] = '\0';
+                    
+                    // Перерисовываем содержимое
+                    text_color = 0x1F;
+                    for (int r = 1; r < ROWS - 1; r++) {
+                        for (int c = 0; c < COLS; c++) {
+                            VGA[r * COLS + c] = (unsigned short)(' ' | (text_color << 8));
+                        }
+                    }
+                    cursor_row = 2;
+                    cursor_col = 2;
+                    for (int i = 0; i < content_len; i++) {
+                        if (content[i] == '\n') {
+                            cursor_row++;
+                            cursor_col = 2;
+                        } else {
+                            putchar(content[i]);
+                        }
+                    }
+                }
+                break;
+        }
+    }
+    
+    // Сохранение файла
+    if (save_file) {
+        if (strlen(content) < sizeof(file->content)) {
+            strcpy(file->content, content);
+            file->size = strlen(content);
+            fs_mark_dirty();
+            fs_save_to_disk();
+            prints("\nFile saved: ");
+            prints(filename);
+            newline();
+        } else {
+            prints("\nError: File content too large\n");
+        }
+    }
+    
+    text_color = old_color;
+    clear_screen();
 }
 
-/* Command parser */
+/* Command parser for recovery mode */
 void run_command(char* line) {
     trim_whitespace(line);
     if(*line == 0) return;
+    
+    /* Save command to history */
+    if (history_count < MAX_HISTORY) {
+        strcpy(command_history[history_count], line);
+        history_count++;
+    } else {
+        for (int i = 0; i < MAX_HISTORY - 1; i++) {
+            strcpy(command_history[i], command_history[i + 1]);
+        }
+        strcpy(command_history[MAX_HISTORY - 1], line);
+    }
     
     char* p = line;
     while(*p && *p != ' ') p++;
     char saved = 0;
     if(*p) { saved = *p; *p = 0; p++; }
     
-    if(strcmp(line, "help") == 0) show_help();
-    else if(strcmp(line, "reboot") == 0) reboot_system();
-    else if(strcmp(line, "clear") == 0) clear_screen();
-    else if(strcmp(line, "ls") == 0) fs_ls();
-    else if(strcmp(line, "format") == 0) fs_format();
-    else if(strcmp(line, "fsck") == 0) fsck_command();
-    else if(strcmp(line, "cd") == 0) { while(*p == ' ') p++; if(*p) fs_cd(p); else prints("Usage: cd <directory>\n"); }
-    else if(strcmp(line, "mkdir") == 0) { while(*p == ' ') p++; if(*p) fs_mkdir(p); else prints("Usage: mkdir <name>\n"); }
-    else if(strcmp(line, "touch") == 0) { while(*p == ' ') p++; if(*p) fs_touch(p); else prints("Usage: touch <name>\n"); }
-    else if(strcmp(line, "rm") == 0) { while(*p == ' ') p++; if(*p) fs_rm(p); else prints("Usage: rm <name>\n"); }
-    else if(strcmp(line, "cat") == 0) { while(*p == ' ') p++; if(*p) fs_cat(p); else prints("Usage: cat <filename>\n"); }
-    else if(strcmp(line, "copy") == 0) {
+    char command_upper[128];
+    strcpy(command_upper, line);
+    for(char* c = command_upper; *c; c++) {
+        if(*c >= 'a' && *c <= 'z') *c = *c - 'a' + 'A';
+    }
+    
+    if(strcasecmp(line, "help") == 0) show_help();
+    else if(strcasecmp(line, "reboot") == 0) reboot_system();
+    else if(strcasecmp(line, "shutdown") == 0) shutdown_system();
+    else if(strcasecmp(line, "clear") == 0) clear_screen();
+    else if(strcasecmp(line, "ls") == 0) fs_ls();
+    else if(strcasecmp(line, "format") == 0) fs_format();
+    else if(strcasecmp(line, "fsck") == 0) fsck_command();
+	else if(strcasecmp(line, "removepass") == 0) recovery_pass();
+	else if(strcasecmp(line, "writer") == 0) { while(*p == ' ') p++; if(*p) writer_command(p); else prints("Usage: writer <filename>\n"); }
+    else if(strcasecmp(line, "cd") == 0) { while(*p == ' ') p++; if(*p) fs_cd(p); else prints("Usage: cd <directory>\n"); }
+    else if(strcasecmp(line, "mkdir") == 0) { while(*p == ' ') p++; if(*p) fs_mkdir(p); else prints("Usage: mkdir <name>\n"); }
+    else if(strcasecmp(line, "touch") == 0) { while(*p == ' ') p++; if(*p) fs_touch(p); else prints("Usage: touch <name>\n"); }
+    else if(strcasecmp(line, "rm") == 0) { while(*p == ' ') p++; if(*p) fs_rm(p); else prints("Usage: rm <name>\n"); }
+    else if(strcasecmp(line, "cat") == 0) { while(*p == ' ') p++; if(*p) fs_cat(p); else prints("Usage: cat <filename>\n"); }
+    else if(strcasecmp(line, "copy") == 0) {
         while(*p == ' ') p++;
         if(*p) {
             char* src;
@@ -1160,43 +1442,57 @@ void run_command(char* line) {
             prints("Usage: copy <src> <dest>\n");
         }
     }
-    else if(strcmp(line, "ps") == 0) ps_command();
-    else if(strcmp(line, "kill") == 0) { while(*p == ' ') p++; if(*p) kill_command(p); else prints("Usage: kill <name or pid>\n"); }
-    else if(strcmp(line, "size") == 0) { while(*p == ' ') p++; if(*p) fs_size(p); else prints("Usage: size <filename>\n"); }
+    else if(strcasecmp(line, "size") == 0) { while(*p == ' ') p++; if(*p) fs_size(p); else prints("Usage: size <filename>\n"); }
+    else if(strcasecmp(line, "history") == 0) history_command();
+    else if(strcasecmp(line, "exit") == 0) { prints("Use 'reboot' or 'shutdown' to exit\n"); }
     else {
         prints("Command not found: ");
         prints(line);
-        newline();
+        prints("\nType 'help' for available commands\n");
     }
     
     if(saved) *p = saved;
 }
 
-/* Kernel main */
+/* Kernel main for recovery mode */
 void _start() {
     text_color = 0x07;
     clear_screen();
 
-    init_processes();
+    // Инициализация файловой системы
     fs_init();
 
-    prints("WexOS Recovery Mode v1.0\n");
-    prints("Type 'help' for available commands\n\n");
+    prints("WexOS Recovery Mode v0.6\n");
+    prints("===========================\n");
+    prints("System started in recovery mode\n\n");
+
+    // Если вышли из меню, переходим в командную строку
+    prints("Recovery Command Line\n");
+    prints("Type 'help' for commands \n");
 
     char cmd_buf[128];
     int cmd_idx = 0;
+    int history_pos = -1;
 
     while (1) {
-        prints("ROOT> ");
+        prints("Recovery> ");
 
         while (1) {
-            char c = keyboard_getchar();
+            cursor_row = cursor_row;
+            cursor_col = cursor_col;
+
+            char c = getch_with_arrows();
 
             if (c == '\n') {
                 cmd_buf[cmd_idx] = '\0';
                 newline();
-                run_command(cmd_buf);
+                
+                if (cmd_idx > 0) {
+                    run_command(cmd_buf);
+                }
+                
                 cmd_idx = 0;
+                history_pos = -1;
                 break;
             } else if (c == '\b') {
                 if (cmd_idx > 0) {
@@ -1206,11 +1502,79 @@ void _start() {
                     putchar(' ');
                     cursor_col--;
                 }
+            } else if (c == 'U') { // стрелка вверх
+                if (history_pos < history_count - 1) {
+                    history_pos++;
+                    strcpy(cmd_buf, command_history[history_count - 1 - history_pos]);
+                    cmd_idx = strlen(cmd_buf);
+
+                    cursor_row = cursor_row;
+                    cursor_col = 0;
+                    for (int i = 0; i < COLS; i++) {
+                        putchar(' ');
+                    }
+                    
+                    cursor_row = cursor_row;
+                    cursor_col = 0;
+                    prints("Recovery> ");
+                    prints(cmd_buf);
+                }
+            } else if (c == 'D') { // стрелка вниз
+                if (history_pos > 0) {
+                    history_pos--;
+                    strcpy(cmd_buf, command_history[history_count - 1 - history_pos]);
+                    cmd_idx = strlen(cmd_buf);
+
+                    cursor_row = cursor_row;
+                    cursor_col = 0;
+                    for (int i = 0; i < COLS; i++) {
+                        putchar(' ');
+                    }
+                    
+                    cursor_row = cursor_row;
+                    cursor_col = 0;
+                    prints("Recovery> ");
+                    prints(cmd_buf);
+                } else if (history_pos == 0) {
+                    history_pos = -1;
+                    cmd_idx = 0;
+                    cmd_buf[0] = '\0';
+
+                    cursor_row = cursor_row;
+                    cursor_col = 0;
+                    for (int i = 0; i < COLS; i++) {
+                        putchar(' ');
+                    }
+                    
+                    cursor_row = cursor_row;
+                    cursor_col = 0;
+                    prints("Recovery> ");
+                }
             } else if (c >= 32 && c <= 126 && cmd_idx < 127) {
                 cmd_buf[cmd_idx] = c;
                 cmd_idx++;
                 cmd_buf[cmd_idx] = '\0';
                 putchar(c);
+            } else if (c == 0x01) { // ESC
+                cmd_idx = 0;
+                cmd_buf[0] = '\0';
+                
+                cursor_row = cursor_row;
+                cursor_col = 0;
+                for (int i = 0; i < COLS; i++) {
+                    putchar(' ');
+                }
+                
+                cursor_row = cursor_row;
+                cursor_col = 0;
+                prints("Recovery> ");
+            } else if (c == '\t') { // TAB
+                if (cmd_idx < 126) {
+                    cmd_buf[cmd_idx] = ' ';
+                    cmd_idx++;
+                    cmd_buf[cmd_idx] = '\0';
+                    putchar(' ');
+                }
             }
         }
     }
