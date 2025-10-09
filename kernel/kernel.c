@@ -134,6 +134,7 @@ void autorun_execute(void);
 void autorun_save_config(const char* command);
 void run_command(char* line);
 void exit_command(void);
+void restore_background(int x, int y);
 void trim_whitespace(char* str);
 
 /* Command history */
@@ -2166,6 +2167,38 @@ void cmd_desktop() {
         }
     }
 
+    // ------ Добавляем облака ------
+    // Облако 1
+    int cloud1_y = 3;
+    int cloud1_x = 10;
+    for (int i = 0; i < 7; i++) {
+        VGA[cloud1_y * COLS + cloud1_x + i] = (unsigned short)(' ' | (0x70 << 8));
+    }
+    VGA[(cloud1_y-1) * COLS + cloud1_x + 2] = (unsigned short)(' ' | (0x70 << 8));
+    VGA[(cloud1_y-1) * COLS + cloud1_x + 3] = (unsigned short)(' ' | (0x70 << 8));
+    VGA[(cloud1_y-1) * COLS + cloud1_x + 4] = (unsigned short)(' ' | (0x70 << 8));
+
+    // Облако 2
+    int cloud2_y = 6;
+    int cloud2_x = 40;
+    for (int i = 0; i < 5; i++) {
+        VGA[cloud2_y * COLS + cloud2_x + i] = (unsigned short)(' ' | (0x70 << 8));
+    }
+    VGA[(cloud2_y-1) * COLS + cloud2_x + 1] = (unsigned short)(' ' | (0x70 << 8));
+    VGA[(cloud2_y-1) * COLS + cloud2_x + 2] = (unsigned short)(' ' | (0x70 << 8));
+    VGA[(cloud2_y-1) * COLS + cloud2_x + 3] = (unsigned short)(' ' | (0x70 << 8));
+
+    // Облако 3
+    int cloud3_y = 4;
+    int cloud3_x = 60;
+    for (int i = 0; i < 6; i++) {
+        VGA[cloud3_y * COLS + cloud3_x + i] = (unsigned short)(' ' | (0x70 << 8));
+    }
+    VGA[(cloud3_y-1) * COLS + cloud3_x + 1] = (unsigned short)(' ' | (0x70 << 8));
+    VGA[(cloud3_y-1) * COLS + cloud3_x + 2] = (unsigned short)(' ' | (0x70 << 8));
+    VGA[(cloud3_y-1) * COLS + cloud3_x + 3] = (unsigned short)(' ' | (0x70 << 8));
+    VGA[(cloud3_y-1) * COLS + cloud3_x + 4] = (unsigned short)(' ' | (0x70 << 8));
+
     // ------ Надпись "WexHi" на траве ------
     cursor_row = ROWS - 3;
     cursor_col = (COLS - 5) / 2;
@@ -2228,6 +2261,10 @@ void cmd_desktop() {
     int cursor_y = ROWS / 2;
     int exit_desktop = 0;
     int last_second = -1; // Для обновления времени только при смене секунды
+    
+    // Переменные для хранения предыдущей позиции курсора
+    int prev_cursor_x = cursor_x;
+    int prev_cursor_y = cursor_y;
 
     // Начальное отображение времени
     char datetime[18];
@@ -2235,6 +2272,7 @@ void cmd_desktop() {
     cursor_row = 0; cursor_col = (COLS - 17) / 2;
     text_color = 0x70;
     prints(datetime);
+    prints("                   |||||| ENG");
 
     while (!exit_desktop) {
         // ------ Обновление времени только при смене секунды ------
@@ -2248,6 +2286,105 @@ void cmd_desktop() {
             last_second = current_second;
         }
 
+        // ------ Восстанавливаем предыдущую позицию курсора ------
+        if (prev_cursor_x != cursor_x || prev_cursor_y != cursor_y) {
+            // Восстанавливаем символ на предыдущей позиции курсора
+            cursor_row = prev_cursor_y;
+            cursor_col = prev_cursor_x;
+            
+            // Проверяем, находится ли позиция на иконке
+            if (prev_cursor_y >= icon_y && prev_cursor_y <= icon_y + 2) {
+                // Проверяем конкретные иконки и их центральные буквы
+                if (prev_cursor_x >= terminal_x && prev_cursor_x <= terminal_x + 2) {
+                    text_color = 0x00;
+                    putchar(' ');
+                    // Если это центральная позиция иконки Terminal, восстанавливаем букву 'T'
+                    if (prev_cursor_y == icon_y + 1 && prev_cursor_x == terminal_x + 1) {
+                        cursor_row = icon_y + 1;
+                        cursor_col = terminal_x + 1;
+                        text_color = 0x0F;
+                        putchar('T');
+                    }
+                }
+                else if (prev_cursor_x >= explorer_x && prev_cursor_x <= explorer_x + 2) {
+                    text_color = 0x00;
+                    putchar(' ');
+                    // Если это центральная позиция иконки Explorer, восстанавливаем букву 'E'
+                    if (prev_cursor_y == icon_y + 1 && prev_cursor_x == explorer_x + 1) {
+                        cursor_row = icon_y + 1;
+                        cursor_col = explorer_x + 1;
+                        text_color = 0x0F;
+                        putchar('E');
+                    }
+                }
+                else if (prev_cursor_x >= recycle_x && prev_cursor_x <= recycle_x + 2) {
+                    text_color = 0x00;
+                    putchar(' ');
+                    // Если это центральная позиция иконки Recycle Bin, восстанавливаем букву 'R'
+                    if (prev_cursor_y == icon_y + 1 && prev_cursor_x == recycle_x + 1) {
+                        cursor_row = icon_y + 1;
+                        cursor_col = recycle_x + 1;
+                        text_color = 0x0F;
+                        putchar('R');
+                    }
+                }
+                else {
+                    // Не на иконке - восстанавливаем фон
+                    restore_background(prev_cursor_x, prev_cursor_y);
+                }
+            }
+            // Проверяем, находится ли позиция на тексте под иконками
+            else if (prev_cursor_y == icon_y + 4) {
+                if (prev_cursor_x >= terminal_x - 1 && prev_cursor_x <= terminal_x + 7) {
+                    text_color = 0x70;
+                    char* text = "Terminal";
+                    int idx = prev_cursor_x - (terminal_x - 1);
+                    if (idx >= 0 && idx < 8) {
+                        putchar(text[idx]);
+                    } else {
+                        putchar(' ');
+                    }
+                }
+                else if (prev_cursor_x >= explorer_x - 2 && prev_cursor_x <= explorer_x + 7) {
+                    text_color = 0x70;
+                    char* text = "Explorer";
+                    int idx = prev_cursor_x - (explorer_x - 2);
+                    if (idx >= 0 && idx < 9) {
+                        putchar(text[idx]);
+                    } else {
+                        putchar(' ');
+                    }
+                }
+                else if (prev_cursor_x >= recycle_x - 2 && prev_cursor_x <= recycle_x + 9) {
+                    text_color = 0x70;
+                    char* text = "Recycle Bin";
+                    int idx = prev_cursor_x - (recycle_x - 2);
+                    if (idx >= 0 && idx < 11) {
+                        putchar(text[idx]);
+                    } else {
+                        putchar(' ');
+                    }
+                }
+                else {
+                    // Не на тексте - восстанавливаем фон
+                    restore_background(prev_cursor_x, prev_cursor_y);
+                }
+            }
+            // Верхняя панель
+            else if (prev_cursor_y == 0) {
+                text_color = 0x70;
+                putchar(' ');
+            }
+            // Все остальные позиции - восстанавливаем фон
+            else {
+                restore_background(prev_cursor_x, prev_cursor_y);
+            }
+        }
+
+        // ------ Сохраняем текущую позицию для следующей итерации ------
+        prev_cursor_x = cursor_x;
+        prev_cursor_y = cursor_y;
+
         // ------ Отрисовка курсора ------
         cursor_row = cursor_y;
         cursor_col = cursor_x;
@@ -2257,17 +2394,6 @@ void cmd_desktop() {
         // ------ Неблокирующая обработка ввода ------
         if (inb(0x64) & 1) {
             unsigned char sc = inb(0x60);
-            
-            // Стираем старый курсор перед перемещением
-            cursor_row = cursor_y;
-            cursor_col = cursor_x;
-            if (cursor_y > ROWS - 5) {
-                text_color = 0x20 + ((cursor_y + cursor_x) % 4);
-                putchar((text_color == 0x20) ? '`' : ' ');
-            } else {
-                text_color = 0x10 + (cursor_y * 2 / ROWS);
-                putchar(' ');
-            }
             
             if (sc == 0xE0) {
                 // Расширенный код
@@ -2342,6 +2468,35 @@ void cmd_desktop() {
     prints("Exited desktop.\n> ");
 }
 
+// Вспомогательная функция для восстановления фона
+void restore_background(int x, int y) {
+    // Проверяем облака
+    if ((y == 3 && x >= 10 && x <= 16) ||
+        (y == 2 && x >= 12 && x <= 14) ||
+        (y == 6 && x >= 40 && x <= 44) ||
+        (y == 5 && x >= 41 && x <= 43) ||
+        (y == 4 && x >= 60 && x <= 65) ||
+        (y == 3 && x >= 61 && x <= 64)) {
+        text_color = 0x70;
+        putchar(' ');
+        return;
+    }
+    
+    // Стандартный фон
+    if (y > ROWS - 5) {
+        // Трава
+        int grass_pattern = (y + x) % 4;
+        char grass_char = (grass_pattern == 0) ? '`' : ' ';
+        int grass_color = 0x20 + grass_pattern;
+        text_color = grass_color;
+        putchar(grass_char);
+    } else {
+        // Небо
+        int sky_color = 0x10 + (y * 2 / ROWS);
+        text_color = sky_color;
+        putchar(' ');
+    }
+}
 /* CPU information command */
 void cpu_command() {
     char vendor[13];
@@ -2639,134 +2794,151 @@ void install_disk() {
     putchar(confirm);
     newline();
 
-    char password[64] = {0};
-    if (confirm == 'Y' || confirm == 'y') {
-        prints("Do you want to set a password for your user? Y/N: ");
-        char pass_confirm = keyboard_getchar();
-        putchar(pass_confirm);
-        newline();
-
-        if (pass_confirm == 'Y' || pass_confirm == 'y') {
-            while (1) {
-                prints("Enter the password: ");
-                int len = 0;
-                char c;
-                while ((c = keyboard_getchar()) != '\n' && len < 63) {
-                    password[len++] = c;
-                }
-                password[len] = '\0';
-                newline();
-
-                prints("Enter the password again: ");
-                char verify[64];
-                len = 0;
-                while ((c = keyboard_getchar()) != '\n' && len < 63) {
-                    verify[len++] = c;
-                }
-                verify[len] = '\0';
-                newline();
-
-                if (strcmp(password, verify) == 0) {
-                    prints("Password set successfully!\n");
-                    break;
-                } else {
-                    prints("Passwords do not match. Try again.\n");
-                }
-            }
-        }
-
-        prints("Formatting disks to WexFS...\n");
-        fs_init();
-        prints("Removing old system directories if they exist...\n");
-        fs_rm("home");
-        fs_rm("SystemRoot");
-		fs_rm("filesystem");
-		fs_rm("boot");
-		fs_rm("mnt");
-		fs_rm("tmp");
-
-        prints("Creating system directories...\n");
-        fs_mkdir("home");
-        fs_mkdir("home/user");
-        fs_mkdir("home/user/desktop");
-        fs_mkdir("home/user/desktop/RecycleBin");
-        fs_mkdir("home/user/desktop/MyComputer");
-        fs_mkdir("home/user/documents");
-        fs_mkdir("home/user/downloads");
-		fs_mkdir("boot");
-		fs_mkdir("boot/Legacy");
-		fs_mkdir("boot/UEFI");
-        fs_mkdir("SystemRoot");
-        fs_mkdir("SystemRoot/bin");
-        fs_mkdir("SystemRoot/logs");
-        fs_mkdir("SystemRoot/drivers");
-        fs_mkdir("SystemRoot/kerneldrivers");
-		fs_mkdir("SystemRoot/config");
-		fs_mkdir("filesystem");
-		fs_mkdir("filesystem/WexFs");
-		fs_mkdir("mnt");
-		fs_mkdir("mnt/rootdisk");
-		fs_mkdir("mnt/Z:");
-		fs_mkdir("temp");
-		fs_mkdir("temp/null");
-		fs_mkdir("dev");
-		fs_mkdir("dev/usb");
-		fs_mkdir("dev/usb 3.0");
-		fs_mkdir("dev/usb 2.0");
-		fs_mkdir("dev/usb 1.0");
-		fs_mkdir("dev/CDROOM");
-		fs_mkdir("dev/floppy");
-
-        prints("Copying system files...\n");
-        fs_touch("SystemRoot/bin/taskmgr.bin");
-        fs_touch("SystemRoot/bin/kernel.bin");
-        fs_touch("SystemRoot/bin/calc.bin");
-        fs_touch("SystemRoot/logs/config.cfg");
-        fs_touch("SystemRoot/drivers/keyboard.sys");
-        fs_touch("SystemRoot/drivers/mouse.sys");
-        fs_touch("SystemRoot/drivers/vga.sys");
-        fs_touch("SystemRoot/kerneldrivers/kernel.sys");
-        fs_touch("SystemRoot/kerneldrivers/ntrsys.sys");
-		prints("Copying boot files...\n");
-		fs_touch("boot/uefi/grub.cfg");
-		fs_touch("boot/Legacy/MBR.BIN");
-		fs_touch("boot/Legacy/signature.cfg");
-		prints("Copying filesystem files...\n");
-		fs_touch("filesystem/WexFs/touch.bin");
-		fs_touch("filesystem/WexFs/mkdir.bin");
-		fs_touch("filesystem/WexFs/size.bin");
-		fs_touch("filesystem/WexFs/cd.bin");
-		fs_touch("filesystem/WexFs/ls.bin");
-		fs_touch("filesystem/WexFs/copy.bin");
-		fs_touch("filesystem/WexFs/rm.bin");
-		
-        prints("Creating autorun configuration...\n");
-        fs_touch("SystemRoot/config/autorun.cfg");
-        FSNode* autorun_file = fs_find_file("SystemRoot/config/autorun.cfg");
-        if (autorun_file) {
-            strcpy(autorun_file->content, "desktop");
-            autorun_file->size = strlen("desktop");
-            prints("Desktop autorun configured\n");
-        }
-
-        // Запись пароля в pass.cfg, если он задан
-        if (password[0] != '\0') {
-            fs_touch("SystemRoot/config/pass.cfg");
-            FSNode* passfile = fs_find_file("SystemRoot/config/pass.cfg");
-            if (passfile) {
-                strcpy(passfile->content, password);
-                passfile->size = strlen(password);
-                fs_mark_dirty();
-                fs_save_to_disk();
-            }
-        }
-
-        prints("Installation completed successfully!\n");
-        prints("Please reboot to start the installed system.\n");
-    } else {
+    if (confirm != 'Y' && confirm != 'y') {
         prints("Installation cancelled.\n");
+        return;
     }
+
+    char password[64] = {0};
+
+    // Установка пароля
+    prints("Do you want to set a password for your user? Y/N: ");
+    char pass_confirm = keyboard_getchar();
+    putchar(pass_confirm);
+    newline();
+
+    if (pass_confirm == 'Y' || pass_confirm == 'y') {
+        while (1) {
+            prints("Enter the password: ");
+            int len = 0;
+            char c;
+            while ((c = keyboard_getchar()) != '\n' && len < 63) {
+                password[len++] = c;
+            }
+            password[len] = '\0';
+            newline();
+
+            prints("Enter the password again: ");
+            char verify[64];
+            len = 0;
+            while ((c = keyboard_getchar()) != '\n' && len < 63) {
+                verify[len++] = c;
+            }
+            verify[len] = '\0';
+            newline();
+
+            if (strcmp(password, verify) == 0) {
+                prints("Password set successfully!\n");
+                break;
+            } else {
+                prints("Passwords do not match. Try again.\n");
+            }
+        }
+    }
+
+    // Форматирование и создание директорий
+    prints("Formatting disks to WexFS...\n");
+    prints("Removing old system directories if they exist...\n");
+    fs_format();
+
+    prints("Creating system directories...\n");
+    fs_mkdir("home");
+    fs_mkdir("home/user");
+    fs_mkdir("home/user/desktop");
+    fs_mkdir("home/user/desktop/RecycleBin");
+    fs_mkdir("home/user/desktop/MyComputer");
+    fs_mkdir("home/user/documents");
+    fs_mkdir("home/user/downloads");
+    fs_mkdir("boot");
+    fs_mkdir("boot/Legacy");
+    fs_mkdir("boot/UEFI");
+    fs_mkdir("SystemRoot");
+    fs_mkdir("SystemRoot/bin");
+    fs_mkdir("SystemRoot/logs");
+    fs_mkdir("SystemRoot/drivers");
+    fs_mkdir("SystemRoot/kerneldrivers");
+    fs_mkdir("SystemRoot/config");
+    fs_mkdir("filesystem");
+    fs_mkdir("filesystem/WexFs");
+    fs_mkdir("mnt");
+    fs_mkdir("mnt/rootdisk");
+    fs_mkdir("mnt/Z:");
+    fs_mkdir("tmp");
+    fs_mkdir("tmp/null");
+    fs_mkdir("dev");
+    fs_mkdir("dev/usb");
+    fs_mkdir("dev/usb 3.0");
+    fs_mkdir("dev/usb 2.0");
+    fs_mkdir("dev/usb 1.0");
+    fs_mkdir("dev/CDROM");
+    fs_mkdir("dev/floppy");
+
+    // Копирование системных файлов
+    prints("Copying system files...\n");
+    fs_touch("SystemRoot/bin/taskmgr.bin");
+    fs_touch("SystemRoot/bin/kernel.bin");
+    fs_touch("SystemRoot/bin/calc.bin");
+    fs_touch("SystemRoot/logs/config.cfg");
+    fs_touch("SystemRoot/drivers/keyboard.sys");
+    fs_touch("SystemRoot/drivers/mouse.sys");
+    fs_touch("SystemRoot/drivers/vga.sys");
+    fs_touch("SystemRoot/kerneldrivers/kernel.sys");
+    fs_touch("SystemRoot/kerneldrivers/ntrsys.sys");
+
+    // Копирование загрузочных файлов
+    prints("Copying boot files...\n");
+    fs_touch("boot/UEFI/grub.cfg");
+    fs_touch("boot/Legacy/MBR.BIN");
+    fs_touch("boot/Legacy/signature.cfg");
+
+    // Копирование файлов системы
+    prints("Copying filesystem files...\n");
+    fs_touch("filesystem/WexFs/touch.bin");
+    fs_touch("filesystem/WexFs/mkdir.bin");
+    fs_touch("filesystem/WexFs/size.bin");
+    fs_touch("filesystem/WexFs/cd.bin");
+    fs_touch("filesystem/WexFs/ls.bin");
+    fs_touch("filesystem/WexFs/copy.bin");
+    fs_touch("filesystem/WexFs/rm.bin");
+
+    // Конфигурация системы
+    prints("Creating system configuration...\n");
+    fs_touch("SystemRoot/config/autorun.cfg");
+    FSNode* autorun_file = fs_find_file("SystemRoot/config/autorun.cfg");
+    if (autorun_file) {
+        strcpy(autorun_file->content, "desktop");
+        autorun_file->size = strlen("desktop");
+        prints("Desktop autorun configured\n");
+    }
+
+    // Запись пароля
+    if (password[0] != '\0') {
+        fs_touch("SystemRoot/config/pass.cfg");
+        FSNode* passfile = fs_find_file("SystemRoot/config/pass.cfg");
+        if (passfile) {
+            strcpy(passfile->content, password);
+            passfile->size = strlen(password);
+            fs_mark_dirty();
+            fs_save_to_disk();
+        }
+    }
+
+    // Завершение установки и перезагрузка
+    prints("\nInstallation completed successfully!\n");
+    prints("Please reboot to start the installed system.\n");
+    prints("Reboot now? Y/N: ");
+
+    char reboot_confirm = keyboard_getchar();
+    putchar(reboot_confirm);
+    newline();
+
+    if (reboot_confirm == 'Y' || reboot_confirm == 'y') {
+        reboot_system();
+    } else {
+
+     }
 }
+
 
 
 void autorun_save_config(const char* command) {
