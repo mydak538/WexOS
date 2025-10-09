@@ -63,7 +63,7 @@ typedef struct {
 typedef struct { 
     char name[MAX_PATH];
     int is_dir; 
-    char content[256]; 
+    char content[4096];  // Увеличил до 4096 байт
     u32 next_sector;
     u32 size;
 } FSNode;
@@ -253,6 +253,13 @@ void ata_write_sector(u32 lba, u8* buffer) {
     }
 }
 
+void memset(void* ptr, int value, int num) {
+    unsigned char* p = (unsigned char*)ptr;
+    for (int i = 0; i < num; i++) {
+        p[i] = (unsigned char)value;
+    }
+}
+
 /* Filesystem functions */
 void fs_load_from_disk() {
     u8 sector_buffer[SECTOR_SIZE];
@@ -260,13 +267,19 @@ void fs_load_from_disk() {
     fs_count = 0;
     fs_dirty = 0;
 
+    #define SECTORS_PER_NODE 11
+
     while (sector != 0 && fs_count < MAX_FILES) {
-        u8 temp_buffer[1536];
-        for (int i = 0; i < 3; i++) {
-            ata_read_sector(sector + i, sector_buffer);
-            memcpy(temp_buffer + i * SECTOR_SIZE, sector_buffer, SECTOR_SIZE);
+        u8* node_data = (u8*)&fs_cache[fs_count];
+        
+        for (int j = 0; j < SECTORS_PER_NODE; j++) {
+            ata_read_sector(sector + j, sector_buffer);
+            int offset = j * SECTOR_SIZE;
+            if (offset < sizeof(FSNode)) {
+                memcpy(node_data + offset, sector_buffer, SECTOR_SIZE);
+            }
         }
-        memcpy(&fs_cache[fs_count], temp_buffer, sizeof(FSNode));
+        
         sector = fs_cache[fs_count].next_sector;
         fs_count++;
     }
@@ -289,14 +302,24 @@ void fs_save_to_disk() {
     u8 sector_buffer[SECTOR_SIZE];
     u32 sector = FS_SECTOR_START;
 
+    // Теперь структура FSNode занимает примерно 4096 + 1024 + 4 + 4 = 5128 байт
+    // 5128 / 512 = 10.01 → 11 секторов на узел
+    #define SECTORS_PER_NODE 11
+
     for (int i = 0; i < fs_count; i++) {
-        u8 temp_buffer[1536];
-        memcpy(temp_buffer, &fs_cache[i], sizeof(FSNode));
-        for (int j = 0; j < 3; j++) {
-            memcpy(sector_buffer, temp_buffer + j * SECTOR_SIZE, SECTOR_SIZE);
+        u8* node_data = (u8*)&fs_cache[i];
+        
+        for (int j = 0; j < SECTORS_PER_NODE; j++) {
+            int offset = j * SECTOR_SIZE;
+            if (offset < sizeof(FSNode)) {
+                memcpy(sector_buffer, node_data + offset, SECTOR_SIZE);
+            } else {
+                memset(sector_buffer, 0, SECTOR_SIZE);
+            }
             ata_write_sector(sector + j, sector_buffer);
         }
-        sector = (i == fs_count - 1) ? 0 : FS_SECTOR_START + (i + 1) * 3;
+        
+        sector = (i == fs_count - 1) ? 0 : FS_SECTOR_START + (i + 1) * SECTORS_PER_NODE;
         if (i < fs_count - 1) {
             fs_cache[i].next_sector = sector;
         } else {
@@ -769,23 +792,23 @@ void fs_check_integrity(void) {
         }
     }
     
-    
     // Проверка размера контента
     prints("Phase 2: Checking file sizes...\n");
     for (int i = 0; i < fs_count; i++) {
         if (!fs_cache[i].is_dir) {
             if (fs_cache[i].size > sizeof(fs_cache[i].content)) {
-                prints("WARNING: File size exceeds content buffer: ");
+                prints("ERROR: File size exceeds content buffer: ");
                 prints(fs_cache[i].name);
                 newline();
-                warnings_found++;
-            }
-            
-            if (strlen(fs_cache[i].content) != fs_cache[i].size) {
-                prints("WARNING: Content length doesn't match size field: ");
-                prints(fs_cache[i].name);
+                prints("  File size: ");
+                char size_str[20];
+                itoa(fs_cache[i].size, size_str, 10);
+                prints(size_str);
+                prints(", Max allowed: ");
+                itoa(sizeof(fs_cache[i].content), size_str, 10);
+                prints(size_str);
                 newline();
-                warnings_found++;
+                errors_found++;
             }
         }
     }
@@ -848,7 +871,6 @@ void fs_check_integrity(void) {
     }
     prints(".\n");
 }
-
 void fsck_command(void) {
     prints("Filesystem Consistency Check\n");
     prints("============================\n");
@@ -1195,9 +1217,6 @@ void update_buttons_display(int button_area_x, int button_area_y, int selected_b
     }
     prints("Shutdown");
 }
-
-/* Function prototypes */
-void fs_cat(const char* filename);
 
 /* Function implementation */
 void fs_cat(const char* filename) {
@@ -3188,7 +3207,7 @@ void writer_command(const char* filename) {
         return;
     }
     
-    char content[256];
+    char content[4096];  // Увеличили буфер до 4096
     strcpy(content, file->content);
     int content_len = strlen(content);
     int cursor_pos = content_len;
@@ -3231,6 +3250,13 @@ void writer_command(const char* filename) {
         if (content[i] == '\n') {
             cursor_row++;
             cursor_col = 2;
+            if (cursor_row >= ROWS - 1) {
+                // Прокрутка вниз если достигли конца экрана
+                cursor_row = ROWS - 2;
+                cursor_col = 2;
+                prints("... [CONTINUED] ...");
+                break;
+            }
         } else {
             putchar(content[i]);
         }
@@ -3249,7 +3275,7 @@ void writer_command(const char* filename) {
                 break;
                 
             case '\n': // Enter
-                if (content_len < 255) {
+                if (content_len < 4095) {  // Обновили лимит
                     for (int i = content_len; i > cursor_pos; i--) {
                         content[i] = content[i-1];
                     }
@@ -3271,6 +3297,12 @@ void writer_command(const char* filename) {
                         if (content[i] == '\n') {
                             cursor_row++;
                             cursor_col = 2;
+                            if (cursor_row >= ROWS - 1) {
+                                cursor_row = ROWS - 2;
+                                cursor_col = 2;
+                                prints("... [CONTINUED] ...");
+                                break;
+                            }
                         } else {
                             putchar(content[i]);
                         }
@@ -3300,6 +3332,12 @@ void writer_command(const char* filename) {
                         if (content[i] == '\n') {
                             cursor_row++;
                             cursor_col = 2;
+                            if (cursor_row >= ROWS - 1) {
+                                cursor_row = ROWS - 2;
+                                cursor_col = 2;
+                                prints("... [CONTINUED] ...");
+                                break;
+                            }
                         } else {
                             putchar(content[i]);
                         }
@@ -3313,7 +3351,7 @@ void writer_command(const char* filename) {
                 break;
                 
             default: // Обычные символы
-                if (c >= 32 && c <= 126 && content_len < 255) {
+                if (c >= 32 && c <= 126 && content_len < 4095) {  // Обновили лимит
                     for (int i = content_len; i > cursor_pos; i--) {
                         content[i] = content[i-1];
                     }
@@ -3335,6 +3373,12 @@ void writer_command(const char* filename) {
                         if (content[i] == '\n') {
                             cursor_row++;
                             cursor_col = 2;
+                            if (cursor_row >= ROWS - 1) {
+                                cursor_row = ROWS - 2;
+                                cursor_col = 2;
+                                prints("... [CONTINUED] ...");
+                                break;
+                            }
                         } else {
                             putchar(content[i]);
                         }
@@ -3346,13 +3390,19 @@ void writer_command(const char* filename) {
     
     // Сохранение файла
     if (save_file) {
-        if (strlen(content) < sizeof(file->content)) {
+        if (content_len <= sizeof(file->content)) {
             strcpy(file->content, content);
-            file->size = strlen(content);
+            file->size = content_len;
             fs_mark_dirty();
             fs_save_to_disk();
             prints("\nFile saved: ");
             prints(filename);
+            
+            char size_str[20];
+            itoa(content_len, size_str, 10);
+            prints(" (");
+            prints(size_str);
+            prints("/4096 bytes)");
             newline();
         } else {
             prints("\nError: File content too large\n");
