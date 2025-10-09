@@ -1136,17 +1136,48 @@ int strcasecmp(const char* a, const char* b) {
     return (unsigned char)*a - (unsigned char)*b;
 }
 
+void info_sys() {
+	unsigned char old_color = text_color;
+    text_color = 0x0A;
+	
+prints("Detected kernel drivers:\n");
+text_color =  0x04;
+prints("RTC - TIME Driver\n");
+prints("ATA Disk Driver\n");
+text_color =  0x06;
+prints("VGA Video Driver\n");
+text_color =  0x06;
+prints("PS/2 Keyboard Driver\n");
+prints("WexFS Driver\n");
+prints("Memory Management Driver\n");
+text_color =  0x04;
+prints("System Control\n");
+prints("Multiboot Driver\n");
+text_color =  0x0A;
+prints("Interrupt handling Driver\n");
+text_color =  0x04;
+prints("Port I/O\n");
+text_color =  0x0A;
+prints("Loading Screen Service Driver\n");
+prints("Detected User drivers:\n");
+prints("AutoRun Service\n");
+text_color =  0x04;
+prints("Text Rendering Engine\n");
+prints("Installation Driver\n");
+text_color = old_color;
+}
+
 /* Command help for recovery mode */
 void show_help() {
     unsigned char old_color = text_color;
     text_color = 0x0A;
     
     const char* commands[] = {
-        "help",     "reboot",   "shutdown", "clear",
-        "ls",       "cd",       "mkdir",    "rm",       
-        "touch",    "copy",     "cat",      "fsck",
-        "format",   "size",     "history",  "exit",
-        "writer",   "removepass",   NULL
+        "help",     "reboot",     "shutdown", "clear",
+        "ls",       "cd",         "mkdir",    "rm",       
+        "touch",    "copy",       "cat",      "fsck",
+        "format",   "size",       "history",  "exit",
+        "writer",   "removepass", "drivers",  NULL
     };
     
     prints("Recovery Mode Commands:\n");
@@ -1423,6 +1454,7 @@ void run_command(char* line) {
     else if(strcasecmp(line, "ls") == 0) fs_ls();
     else if(strcasecmp(line, "format") == 0) fs_format();
     else if(strcasecmp(line, "fsck") == 0) fsck_command();
+	else if(strcasecmp(line, "drivers") == 0) info_sys();
 	else if(strcasecmp(line, "removepass") == 0) recovery_pass();
 	else if(strcasecmp(line, "writer") == 0) { while(*p == ' ') p++; if(*p) writer_command(p); else prints("Usage: writer <filename>\n"); }
     else if(strcasecmp(line, "cd") == 0) { while(*p == ' ') p++; if(*p) fs_cd(p); else prints("Usage: cd <directory>\n"); }
