@@ -6,32 +6,41 @@ typedef unsigned short u16;
 typedef unsigned char u8;
 
 #define NULL ((void*)0)
+#define MAX_NAME 256
+#define MAX_PATH 1024
 #define SECTOR_SIZE 512
 #define FS_SECTOR_START 1
 #define MAX_FILES 64
 
-/* Структура файловой системы */
+/* Структура файловой системы - ИДЕНТИЧНА ЯДРУ! */
 typedef struct { 
-    char name[256];
+    char name[MAX_PATH];        // 1024 байта
     int is_dir; 
-    char content[256]; 
+    char content[4096];         // 4096 байт - как в ядре!
     u32 next_sector;
     u32 size;
 } FSNode;
 
 /* Function prototypes */
 void putchar(char ch);
+void fs_save_to_disk(void);  
 char keyboard_getchar();
 void memcpy(void* dst, void* src, int len);
 int strcmp(const char* a, const char* b);
 int strlen(const char* s);
 void strcpy(char* dst, const char* src);
 char* strcat(char* dest, const char* src);
+char* strchr(const char* s, int c);
+char* strstr(const char* haystack, const char* needle);
+char* strrchr(const char* s, int c);
+void memset(void* ptr, int value, int num);
 void prints(const char* s);
 void newline();
 void itoa(int value, char* str, int base);
 void clear_screen();
 void delay(int seconds);
+void fs_format(void);
+void reboot_system(void);
 
 /* VGA text buffer */
 volatile unsigned short* VGA = (unsigned short*)0xB8000;
@@ -69,6 +78,7 @@ static inline void outw(unsigned short port, u16 val) {
 
 FSNode fs_cache[MAX_FILES];
 int fs_count = 0;
+char current_dir[MAX_PATH] = "/";
 int fs_dirty = 0;
 
 /* Multiboot header */
@@ -83,136 +93,6 @@ multiboot_header_t multiboot_header __attribute__((section(".multiboot"))) = {
     MULTIBOOT_FLAGS,
     -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 };
-
-/* ATA functions */
-void ata_wait_ready() {
-    while (inb(ATA_STATUS) & 0x80);
-}
-
-void ata_wait_drq() {
-    while (!(inb(ATA_STATUS) & 0x08));
-}
-
-void ata_read_sector(u32 lba, u8* buffer) {
-    outb(ATA_DEVICE, 0xE0 | ((lba >> 24) & 0x0F));
-    outb(ATA_SECTOR_COUNT, 1);
-    outb(ATA_LBA_LOW, (u8)lba);
-    outb(ATA_LBA_MID, (u8)(lba >> 8));
-    outb(ATA_LBA_HIGH, (u8)(lba >> 16));
-    outb(ATA_CMD, 0x20);
-
-    ata_wait_ready();
-    if (inb(ATA_STATUS) & 0x01) {
-        prints("ATA Read Error\n");
-        return;
-    }
-
-    ata_wait_drq();
-    for (int i = 0; i < SECTOR_SIZE / 2; i++) {
-        u16 data = inw(ATA_DATA);
-        buffer[i * 2] = (u8)data;
-        buffer[i * 2 + 1] = (u8)(data >> 8);
-    }
-}
-
-void ata_write_sector(u32 lba, u8* buffer) {
-    outb(ATA_DEVICE, 0xE0 | ((lba >> 24) & 0x0F));
-    outb(ATA_SECTOR_COUNT, 1);
-    outb(ATA_LBA_LOW, (u8)lba);
-    outb(ATA_LBA_MID, (u8)(lba >> 8));
-    outb(ATA_LBA_HIGH, (u8)(lba >> 16));
-    outb(ATA_CMD, 0x30);
-
-    ata_wait_ready();
-    ata_wait_drq();
-
-    for (int i = 0; i < SECTOR_SIZE / 2; i++) {
-        u16 data = (buffer[i * 2 + 1] << 8) | buffer[i * 2];
-        outw(ATA_DATA, data);
-    }
-
-    ata_wait_ready();
-    if (inb(ATA_STATUS) & 0x01) {
-        prints("ATA Write Error\n");
-    }
-}
-
-/* Filesystem functions */
-void fs_save_to_disk() {
-    if (!fs_dirty) return;
-
-    u8 sector_buffer[SECTOR_SIZE];
-    u32 sector = FS_SECTOR_START;
-
-    for (int i = 0; i < fs_count; i++) {
-        u8 temp_buffer[1536];
-        memcpy(temp_buffer, &fs_cache[i], sizeof(FSNode));
-        for (int j = 0; j < 3; j++) {
-            memcpy(sector_buffer, temp_buffer + j * SECTOR_SIZE, SECTOR_SIZE);
-            ata_write_sector(sector + j, sector_buffer);
-        }
-        sector = (i == fs_count - 1) ? 0 : FS_SECTOR_START + (i + 1) * 3;
-        if (i < fs_count - 1) {
-            fs_cache[i].next_sector = sector;
-        } else {
-            fs_cache[i].next_sector = 0;
-        }
-    }
-
-    fs_dirty = 0;
-}
-
-void fs_mark_dirty() {
-    fs_dirty = 1;
-}
-
-void fs_mkdir(const char* name) {
-    if (fs_count >= MAX_FILES) {
-        prints("Error: Maximum files reached\n");
-        return;
-    }
-
-    for (int i = 0; i < fs_count; i++) {
-        if (strcmp(fs_cache[i].name, name) == 0) {
-            prints("Error: Name already exists: ");
-            prints(name);
-            newline();
-            return;
-        }
-    }
-
-    strcpy(fs_cache[fs_count].name, name);
-    fs_cache[fs_count].is_dir = 1;
-    fs_cache[fs_count].content[0] = '\0';
-    fs_cache[fs_count].next_sector = 0;
-    fs_cache[fs_count].size = 0;
-    fs_count++;
-    fs_mark_dirty();
-}
-
-void fs_touch(const char* name) {
-    if (fs_count >= MAX_FILES) {
-        prints("Error: Maximum files reached\n");
-        return;
-    }
-
-    for (int i = 0; i < fs_count; i++) {
-        if (strcmp(fs_cache[i].name, name) == 0) {
-            prints("Error: Name already exists: ");
-            prints(name);
-            newline();
-            return;
-        }
-    }
-
-    strcpy(fs_cache[fs_count].name, name);
-    fs_cache[fs_count].is_dir = 0;
-    fs_cache[fs_count].content[0] = '\0';
-    fs_cache[fs_count].next_sector = 0;
-    fs_cache[fs_count].size = 0;
-    fs_count++;
-    fs_mark_dirty();
-}
 
 /* String functions */
 void memcpy(void* dst, void* src, int len) {
@@ -241,6 +121,40 @@ char* strcat(char* dest, const char* src) {
     while(*ptr) ptr++;
     while((*ptr++ = *src++));
     return dest;
+}
+
+char* strchr(const char* s, int c) {
+    while(*s) {
+        if(*s == c) return (char*)s;
+        s++;
+    }
+    return NULL;
+}
+
+char* strstr(const char* haystack, const char* needle) {
+    if(!*needle) return (char*)haystack;
+    for(const char* p = haystack; *p; p++) {
+        const char* h = p, *n = needle;
+        while(*h && *n && *h == *n) { h++; n++; }
+        if(!*n) return (char*)p;
+    }
+    return NULL;
+}
+
+char* strrchr(const char* s, int c) {
+    const char* last = NULL;
+    while(*s) {
+        if(*s == c) last = s;
+        s++;
+    }
+    return (char*)last;
+}
+
+void memset(void* ptr, int value, int num) {
+    unsigned char* p = (unsigned char*)ptr;
+    for (int i = 0; i < num; i++) {
+        p[i] = (unsigned char)value;
+    }
 }
 
 void itoa(int value, char* str, int base) {
@@ -318,6 +232,282 @@ void delay(int seconds) {
     for (volatile int i = 0; i < seconds * 10000000; i++);
 }
 
+/* ATA functions */
+void ata_wait_ready() {
+    while (inb(ATA_STATUS) & 0x80);
+}
+
+void ata_wait_drq() {
+    while (!(inb(ATA_STATUS) & 0x08));
+}
+
+void ata_read_sector(u32 lba, u8* buffer) {
+    outb(ATA_DEVICE, 0xE0 | ((lba >> 24) & 0x0F));
+    outb(ATA_SECTOR_COUNT, 1);
+    outb(ATA_LBA_LOW, (u8)lba);
+    outb(ATA_LBA_MID, (u8)(lba >> 8));
+    outb(ATA_LBA_HIGH, (u8)(lba >> 16));
+    outb(ATA_CMD, 0x20);
+
+    ata_wait_ready();
+    if (inb(ATA_STATUS) & 0x01) {
+        prints("ATA Read Error\n");
+        return;
+    }
+
+    ata_wait_drq();
+    for (int i = 0; i < SECTOR_SIZE / 2; i++) {
+        u16 data = inw(ATA_DATA);
+        buffer[i * 2] = (u8)data;
+        buffer[i * 2 + 1] = (u8)(data >> 8);
+    }
+}
+
+void ata_write_sector(u32 lba, u8* buffer) {
+    outb(ATA_DEVICE, 0xE0 | ((lba >> 24) & 0x0F));
+    outb(ATA_SECTOR_COUNT, 1);
+    outb(ATA_LBA_LOW, (u8)lba);
+    outb(ATA_LBA_MID, (u8)(lba >> 8));
+    outb(ATA_LBA_HIGH, (u8)(lba >> 16));
+    outb(ATA_CMD, 0x30);
+
+    ata_wait_ready();
+    ata_wait_drq();
+
+    for (int i = 0; i < SECTOR_SIZE / 2; i++) {
+        u16 data = (buffer[i * 2 + 1] << 8) | buffer[i * 2];
+        outw(ATA_DATA, data);
+    }
+
+    ata_wait_ready();
+    if (inb(ATA_STATUS) & 0x01) {
+        prints("ATA Write Error\n");
+    }
+}
+
+/* Filesystem functions */
+void fs_load_from_disk() {
+    u8 sector_buffer[SECTOR_SIZE];
+    u32 sector = FS_SECTOR_START;
+    fs_count = 0;
+    fs_dirty = 0;
+
+    #define SECTORS_PER_NODE 11
+
+    while (sector != 0 && fs_count < MAX_FILES) {
+        u8* node_data = (u8*)&fs_cache[fs_count];
+        
+        for (int j = 0; j < SECTORS_PER_NODE; j++) {
+            ata_read_sector(sector + j, sector_buffer);
+            int offset = j * SECTOR_SIZE;
+            if (offset < sizeof(FSNode)) {
+                memcpy(node_data + offset, sector_buffer, SECTOR_SIZE);
+            }
+        }
+        
+        sector = fs_cache[fs_count].next_sector;
+        fs_count++;
+    }
+
+    if (fs_count == 0) {
+        strcpy(fs_cache[0].name, "/");
+        fs_cache[0].is_dir = 1;
+        fs_cache[0].content[0] = '\0';
+        fs_cache[0].next_sector = 0;
+        fs_cache[0].size = 0;
+        fs_count = 1;
+        fs_dirty = 1;
+        fs_save_to_disk();
+    }
+}
+
+void fs_save_to_disk() {
+    if (!fs_dirty) return;
+
+    u8 sector_buffer[SECTOR_SIZE];
+    u32 sector = FS_SECTOR_START;
+
+    #define SECTORS_PER_NODE 11
+
+    for (int i = 0; i < fs_count; i++) {
+        u8* node_data = (u8*)&fs_cache[i];
+        
+        for (int j = 0; j < SECTORS_PER_NODE; j++) {
+            int offset = j * SECTOR_SIZE;
+            if (offset < sizeof(FSNode)) {
+                memcpy(sector_buffer, node_data + offset, SECTOR_SIZE);
+            } else {
+                memset(sector_buffer, 0, SECTOR_SIZE);
+            }
+            ata_write_sector(sector + j, sector_buffer);
+        }
+        
+        sector = (i == fs_count - 1) ? 0 : FS_SECTOR_START + (i + 1) * SECTORS_PER_NODE;
+        if (i < fs_count - 1) {
+            fs_cache[i].next_sector = sector;
+        } else {
+            fs_cache[i].next_sector = 0;
+        }
+    }
+
+    fs_dirty = 0;
+}
+
+void fs_mark_dirty() {
+    fs_dirty = 1;
+}
+
+void fs_init() {
+    fs_load_from_disk();
+    strcpy(current_dir, "/");
+}
+
+void fs_mkdir(const char* name) {
+    if (fs_count >= MAX_FILES) {
+        prints("Error: Maximum files reached\n");
+        return;
+    }
+
+    char full_path[MAX_PATH];
+    if (strcmp(current_dir, "/") == 0) {
+        if (strlen(name) >= MAX_NAME) {
+            prints("Error: Name too long: ");
+            prints(name);
+            newline();
+            return;
+        }
+        strcpy(full_path, name);
+    } else {
+        if (strlen(current_dir) + strlen(name) + 1 >= MAX_PATH) {
+            prints("Error: Path too long: ");
+            prints(name);
+            newline();
+            return;
+        }
+        strcpy(full_path, current_dir);
+        strcat(full_path, name);
+    }
+
+    for (int i = 0; i < fs_count; i++) {
+        if (strcmp(fs_cache[i].name, full_path) == 0) {
+            prints("Error: Name already exists: ");
+            prints(name);
+            newline();
+            return;
+        }
+    }
+
+    strcpy(fs_cache[fs_count].name, full_path);
+    fs_cache[fs_count].is_dir = 1;
+    fs_cache[fs_count].content[0] = '\0';
+    fs_cache[fs_count].next_sector = 0;
+    fs_cache[fs_count].size = 0;
+    fs_count++;
+    fs_mark_dirty();
+    fs_save_to_disk();
+    prints("Directory '");
+    prints(name);
+    prints("' created\n");
+}
+
+void fs_touch(const char* name) {
+    if (fs_count >= MAX_FILES) {
+        prints("Error: Maximum files reached\n");
+        return;
+    }
+
+    char full_path[MAX_PATH];
+    if (strcmp(current_dir, "/") == 0) {
+        if (strlen(name) >= MAX_NAME) {
+            prints("Error: Name too long: ");
+            prints(name);
+            newline();
+            return;
+        }
+        strcpy(full_path, name);
+    } else {
+        if (strlen(current_dir) + strlen(name) + 1 >= MAX_PATH) {
+            prints("Error: Path too long: ");
+            prints(name);
+            newline();
+            return;
+        }
+        strcpy(full_path, current_dir);
+        strcat(full_path, name);
+    }
+
+    for (int i = 0; i < fs_count; i++) {
+        if (strcmp(fs_cache[i].name, full_path) == 0) {
+            prints("Error: Name already exists: ");
+            prints(name);
+            newline();
+            return;
+        }
+    }
+
+    strcpy(fs_cache[fs_count].name, full_path);
+    fs_cache[fs_count].is_dir = 0;
+    fs_cache[fs_count].content[0] = '\0';
+    fs_cache[fs_count].next_sector = 0;
+    fs_cache[fs_count].size = 0;
+    fs_count++;
+    fs_mark_dirty();
+    fs_save_to_disk();
+    prints("File '");
+    prints(name);
+    prints("' created\n");
+}
+
+FSNode* fs_find_file(const char* name) {
+    char full_path[MAX_PATH];
+    if (strcmp(current_dir, "/") == 0) {
+        if (strlen(name) >= MAX_NAME) {
+            prints("Error: Name too long: ");
+            prints(name);
+            newline();
+            return NULL;
+        }
+        strcpy(full_path, name);
+    } else {
+        if (strlen(current_dir) + strlen(name) + 1 >= MAX_PATH) {
+            prints("Error: Path too long: ");
+            prints(name);
+            newline();
+            return NULL;
+        }
+        strcpy(full_path, current_dir);
+        strcat(full_path, name);
+    }
+
+    for (int i = 0; i < fs_count; i++) {
+        if (strcmp(fs_cache[i].name, full_path) == 0 && !fs_cache[i].is_dir) {
+            return &fs_cache[i];
+        }
+    }
+    return NULL;
+}
+
+void fs_format(void) {
+    prints("Formatting filesystem...\n");
+    
+    // Сбрасываем файловую систему к начальному состоянию
+    fs_count = 1;
+    strcpy(fs_cache[0].name, "/");
+    fs_cache[0].is_dir = 1;
+    fs_cache[0].content[0] = '\0';
+    fs_cache[0].next_sector = 0;
+    fs_cache[0].size = 0;
+    
+    // Сбрасываем текущую директорию
+    strcpy(current_dir, "/");
+    
+    // Помечаем как измененную и сохраняем
+    fs_mark_dirty();
+    fs_save_to_disk();
+    
+    prints("Filesystem formatted successfully.\n");
+}
+
 /* Keyboard input */
 static unsigned char shift_pressed = 0;
 
@@ -383,47 +573,47 @@ void get_password(char* buffer, int max_len) {
     }
 }
 
+/* Reboot system */
+void reboot_system() {
+    prints("Rebooting...\n");
+    outb(0x64, 0xFE);
+    while(1) { __asm__ volatile("hlt"); }
+}
+
 /* WexOS Installer */
 void install_wexos() {
-    text_color = 0x07;
-    clear_screen();
-    
-    prints("===============================================\n");
-    prints("          WexOS Installation Wizard\n");
-    prints("===============================================\n\n");
-    
-    // Предупреждение о форматировании
-    prints("WARNING: This will format ALL disks to WexFS filesystem!\n");
-    prints("ALL existing data will be PERMANENTLY ERASED!\n\n");
-    
-    prints("Do you want to continue with installation? (y/N): ");
-    
+    prints("==========================================\n");
+    prints("         Installation system WexOS        \n");
+    prints("==========================================\n");
+    prints("\nWARNING: ALL DISKS INCLUDING BOOT DISKS WILL BE FORMATTED TO WexFS FOR OS INSTALLATION.\n");
+    prints("CONTINUE? Y/N: ");
+
     char confirm = keyboard_getchar();
     putchar(confirm);
     newline();
-    
-    if (confirm != 'y' && confirm != 'Y') {
+
+    if (confirm != 'Y' && confirm != 'y') {
         prints("Installation cancelled.\n");
         return;
     }
-    
-    // Запрос пароля
+
     char password[64] = {0};
-    char verify[64] = {0};
-    
-    prints("Do you want to set a password for your user? (y/N): ");
+
+    // Установка пароля
+    prints("Do you want to set a password for your user? Y/N: ");
     char pass_confirm = keyboard_getchar();
     putchar(pass_confirm);
     newline();
-    
-    if (pass_confirm == 'y' || pass_confirm == 'Y') {
+
+    if (pass_confirm == 'Y' || pass_confirm == 'y') {
         while (1) {
             prints("Enter the password: ");
             get_password(password, sizeof(password));
-            
+
             prints("Enter the password again: ");
+            char verify[64];
             get_password(verify, sizeof(verify));
-            
+
             if (strcmp(password, verify) == 0) {
                 prints("Password set successfully!\n");
                 break;
@@ -432,23 +622,12 @@ void install_wexos() {
             }
         }
     }
-    
-    // Начало установки
-    prints("\nStarting installation...\n");
+
+    // Форматирование и создание директорий
     prints("Formatting disks to WexFS...\n");
-    
-    // Инициализация файловой системы
-    fs_count = 0;
-    
-    // Создание корневой директории
-    strcpy(fs_cache[fs_count].name, "/");
-    fs_cache[fs_count].is_dir = 1;
-    fs_cache[fs_count].content[0] = '\0';
-    fs_cache[fs_count].next_sector = 0;
-    fs_cache[fs_count].size = 0;
-    fs_count++;
-    
-    // Создание системных директорий
+    prints("Removing old system directories if they exist...\n");
+    fs_format();
+
     prints("Creating system directories...\n");
     fs_mkdir("home");
     fs_mkdir("home/user");
@@ -468,9 +647,21 @@ void install_wexos() {
     fs_mkdir("SystemRoot/config");
     fs_mkdir("filesystem");
     fs_mkdir("filesystem/WexFs");
-    
-    // Создание системных файлов
-    prints("Creating system files...\n");
+    fs_mkdir("mnt");
+    fs_mkdir("mnt/rootdisk");
+    fs_mkdir("mnt/Z:");
+    fs_mkdir("tmp");
+    fs_mkdir("tmp/null");
+    fs_mkdir("dev");
+    fs_mkdir("dev/usb");
+    fs_mkdir("dev/usb3.0");
+    fs_mkdir("dev/usb2.0");
+    fs_mkdir("dev/usb1.0");
+    fs_mkdir("dev/CDROM");
+    fs_mkdir("dev/floppy");
+
+    // Копирование системных файлов
+    prints("Copying system files...\n");
     fs_touch("SystemRoot/bin/taskmgr.bin");
     fs_touch("SystemRoot/bin/kernel.bin");
     fs_touch("SystemRoot/bin/calc.bin");
@@ -480,9 +671,15 @@ void install_wexos() {
     fs_touch("SystemRoot/drivers/vga.sys");
     fs_touch("SystemRoot/kerneldrivers/kernel.sys");
     fs_touch("SystemRoot/kerneldrivers/ntrsys.sys");
-    fs_touch("boot/uefi/grub.cfg");
+
+    // Копирование загрузочных файлов
+    prints("Copying boot files...\n");
+    fs_touch("boot/UEFI/grub.cfg");
     fs_touch("boot/Legacy/MBR.BIN");
     fs_touch("boot/Legacy/signature.cfg");
+
+    // Копирование файлов системы
+    prints("Copying filesystem files...\n");
     fs_touch("filesystem/WexFs/touch.bin");
     fs_touch("filesystem/WexFs/mkdir.bin");
     fs_touch("filesystem/WexFs/size.bin");
@@ -490,42 +687,52 @@ void install_wexos() {
     fs_touch("filesystem/WexFs/ls.bin");
     fs_touch("filesystem/WexFs/copy.bin");
     fs_touch("filesystem/WexFs/rm.bin");
-    
-    // Запись пароля если он задан
+
+    // Конфигурация системы
+    prints("Creating system configuration...\n");
+    fs_touch("SystemRoot/config/autorun.cfg");
+    FSNode* autorun_file = fs_find_file("SystemRoot/config/autorun.cfg");
+    if (autorun_file) {
+        strcpy(autorun_file->content, "desktop");
+        autorun_file->size = strlen("desktop");
+        prints("Desktop autorun configured\n");
+    }
+
+    // Запись пароля
     if (password[0] != '\0') {
         fs_touch("SystemRoot/config/pass.cfg");
-        // Находим файл пароля и записываем в него пароль
-        for (int i = 0; i < fs_count; i++) {
-            if (strcmp(fs_cache[i].name, "SystemRoot/config/pass.cfg") == 0 && !fs_cache[i].is_dir) {
-                strcpy(fs_cache[i].content, password);
-                fs_cache[i].size = strlen(password);
-                break;
-            }
+        FSNode* passfile = fs_find_file("SystemRoot/config/pass.cfg");
+        if (passfile) {
+            strcpy(passfile->content, password);
+            passfile->size = strlen(password);
+            fs_mark_dirty();
+            fs_save_to_disk();
         }
     }
-    
-    // Сохранение файловой системы на диск
-    prints("Saving filesystem to disk...\n");
-    fs_save_to_disk();
-    
-    prints("\n===============================================\n");
-    prints("Installation completed successfully!\n");
-    prints("WexOS has been installed on your system.\n");
-    prints("Please reboot to start using WexOS.\n");
-    prints("===============================================\n\n");
-    
-    prints("Press any key to reboot...");
-    keyboard_getchar();
-    
-    // Перезагрузка системы
-    outb(0x64, 0xFE);
-    while(1) { __asm__ volatile("hlt"); }
+
+    // Завершение установки и перезагрузка
+    prints("\nInstallation completed successfully!\n");
+    prints("Please reboot to start the installed system.\n");
+    prints("Reboot now? Y/N: ");
+
+    char reboot_confirm = keyboard_getchar();
+    putchar(reboot_confirm);
+    newline();
+
+    if (reboot_confirm == 'Y' || reboot_confirm == 'y') {
+        reboot_system();
+    } else {
+        prints("Please reboot manually to start the installed system.\n");
+    }
 }
 
 /* Kernel main */
 void _start() {
     text_color = 0x07;
     clear_screen();
+    
+    // Инициализация файловой системы
+    fs_init();
     
     // Прямой запуск установщика
     install_wexos();
