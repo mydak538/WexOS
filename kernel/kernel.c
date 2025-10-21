@@ -736,6 +736,24 @@ void fs_size(const char* name) {
     prints(" Bytes\n");
 }
 
+void find_command(const char* pattern) {
+    prints("Searching for: ");
+    prints(pattern);
+    newline();
+    for(int i = 0; i < fs_count; i++) {
+        if(strstr(fs_cache[i].name, pattern) != NULL) {
+            prints(fs_cache[i].name);
+            if(fs_cache[i].is_dir) prints("/");
+            newline();
+        }
+    }
+}
+
+void pwd_command() { 
+    prints(current_dir); 
+    newline(); 
+}
+
 void fs_format(void) {
     prints("WARNING: This will erase ALL files and directories!\n");
     prints("Are you sure you want to continue? (y/N): ");
@@ -3899,7 +3917,7 @@ void show_help() {
         "cpu",      "date",     "watch",    "biosver",  "calc",
         "time",     "size",     "osver",    "history",  "format",
         "fsck",     "cat",      "explorer", "osinfo",   "autorun",
-		"exit", NULL
+		"exit",     "pwd",      "find", NULL
 		
     };
     
@@ -4008,6 +4026,15 @@ void run_command(char* line) {
     else if(strcasecmp(line, "rm") == 0) { while(*p == ' ') p++; if(*p) fs_rm(p); else prints("Usage: rm <name>\n"); }
 	else if(strcasecmp(line, "explorer") == 0) wexplorer_command();
 	else if(strcasecmp(line, "exit") == 0) exit_command();
+	else if(strcasecmp(line, "pwd") == 0) {
+    prints(current_dir);
+    newline();
+}
+else if(strcasecmp(line, "find") == 0) {
+    while(*p == ' ') p++;
+    if(*p) find_command(p);
+    else prints("Usage: find <pattern>\n");
+}
 	else if(strcasecmp(line, "autorun") == 0) { 
     while(*p == ' ') p++; 
     if(*p) autorun_command(p); 
