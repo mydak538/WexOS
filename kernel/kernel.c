@@ -136,6 +136,8 @@ void run_command(char* line);
 void exit_command(void);
 void restore_background(int x, int y);
 void trim_whitespace(char* str);
+void matrix_game(void);
+int rand(void);
 
 /* Command history */
 int history_count = 0;
@@ -3215,6 +3217,331 @@ void get_number_input(int* value, int min, int max, int row, int col, int field_
     }
 }
 
+/* Matrix Game - зеленые падающие символы на черном фоне */
+void matrix_game(void) {
+    unsigned char old_color = text_color;
+    int exit_matrix = 0;
+    
+    // Очищаем экран черным цветом
+    clear_screen();
+    for(int r = 0; r < ROWS; r++) {
+        for(int c = 0; c < COLS; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (BLACK << 8));
+        }
+    }
+    
+    // Массив для хранения позиций и символов "капель"
+    typedef struct {
+        int x;
+        int y;
+        int speed;
+        char symbol;
+        int active;
+        int length;
+        int brightness;
+    } MatrixDrop;
+    
+    MatrixDrop drops[COLS];
+    int max_drops = COLS / 2; // Максимум капель одновременно
+    
+    // Инициализация капель
+    for(int i = 0; i < max_drops; i++) {
+        drops[i].active = 0;
+        drops[i].x = 0;
+        drops[i].y = 0;
+        drops[i].speed = 0;
+        drops[i].symbol = ' ';
+        drops[i].length = 0;
+        drops[i].brightness = 0;
+    }
+    
+    // Символы для эффекта (буквы, цифры, символы)
+    const char matrix_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?/~`";
+    int num_chars = strlen(matrix_chars);
+    
+    int frame = 0;
+    
+    while(!exit_matrix) {
+        frame++;
+        
+        // Случайно создаем новые капли (МЕДЛЕННЕЕ - изменено с 10% на 5%)
+        if(frame % 3 == 0) {
+            for(int i = 0; i < max_drops; i++) {
+                if(!drops[i].active && (rand() % 100) < 5) { // 5% шанс вместо 10%
+                    drops[i].active = 1;
+                    drops[i].x = rand() % COLS;
+                    drops[i].y = 0;
+                    drops[i].speed = 1; // МЕДЛЕННЕЕ - постоянная скорость 1 вместо 1-3
+                    drops[i].length = 5 + (rand() % 10);
+                    drops[i].brightness = 0x0A;
+                }
+            }
+        }
+        
+        // Обновляем и рисуем активные капли
+        for(int i = 0; i < max_drops; i++) {
+            if(drops[i].active) {
+                // Стираем предыдущую позицию (хвост капли)
+                if(drops[i].y - drops[i].length >= 0) {
+                    cursor_row = drops[i].y - drops[i].length;
+                    cursor_col = drops[i].x;
+                    text_color = BLACK;
+                    putchar(' ');
+                }
+                
+                // Обновляем позицию
+                drops[i].y += drops[i].speed;
+                
+                // Если капля вышла за пределы экрана, деактивируем ее
+                if(drops[i].y >= ROWS + drops[i].length) {
+                    drops[i].active = 0;
+                    continue;
+                }
+                
+                // Рисуем каплю
+                for(int j = 0; j < drops[i].length && drops[i].y - j >= 0; j++) {
+                    int current_y = drops[i].y - j;
+                    if(current_y < ROWS) {
+                        cursor_row = current_y;
+                        cursor_col = drops[i].x;
+                        
+                        // Градиент яркости - голова ярче, хвост темнее
+                        int brightness;
+                        if(j == 0) {
+                            brightness = 0x0A; // Ярко-зеленый
+                        } else if(j == 1) {
+                            brightness = 0x0A; // Ярко-зеленый
+                        } else {
+                            brightness = 0x02; // Темно-зеленый
+                        }
+                        
+                        text_color = brightness;
+                        
+                        // Случайный символ для каждого сегмента капли
+                        char random_char = matrix_chars[rand() % num_chars];
+                        putchar(random_char);
+                    }
+                }
+                
+                // Обновляем символ головы капли
+                if(drops[i].y < ROWS) {
+                    cursor_row = drops[i].y;
+                    cursor_col = drops[i].x;
+                    text_color = 0x0A; // Ярко-зеленый для головы
+                    char head_char = matrix_chars[rand() % num_chars];
+                    putchar(head_char);
+                }
+            }
+        }
+        
+        // Добавляем случайные одиночные мерцающие символы
+        if(frame % 5 == 0) {
+            for(int i = 0; i < 5; i++) {
+                int x = rand() % COLS;
+                int y = rand() % ROWS;
+                
+                cursor_row = y;
+                cursor_col = x;
+                
+                // Случайная яркость зеленого
+                int brightness = 0x02 + (rand() % 3) * 2;
+                text_color = brightness;
+                
+                char random_char = matrix_chars[rand() % num_chars];
+                putchar(random_char);
+            }
+        }
+        
+        // Проверяем нажатие ESC для выхода
+        unsigned char st = inb(0x64);
+        if(st & 1) {
+            unsigned char sc = inb(0x60);
+            if(sc == 0x01) { // ESC
+                exit_matrix = 1;
+            }
+        }
+        
+        // БОЛЬШАЯ ЗАДЕРЖКА ДЛЯ ЗАМЕДЛЕНИЯ (увеличено с 20000 до 100000)
+        for(volatile int i = 0; i < 100000; i++);
+    }
+    
+    // Восстанавливаем оригинальный цвет и очищаем экран
+    text_color = old_color;
+    clear_screen();
+    prints("Matrix effect ended.\n> ");
+}
+
+/* Простая функция rand для псевдослучайных чисел */
+static unsigned int rand_seed = 1;
+
+int rand(void) {
+    rand_seed = rand_seed * 1103515245 + 12345;
+    return (unsigned int)(rand_seed / 65536) % 32768;
+}
+
+/* ===== ПРОСТОЙ КАЛЕНДАРЬ ===== */
+#define CAL_DAY_COLOR 0x07       // Обычный цвет
+#define CAL_WEEKEND_COLOR 0x4F   // Красный для выходных
+#define CAL_TODAY_COLOR 0x2F     // Зеленый для сегодня
+
+// Структура даты
+typedef struct {
+    int day;
+    int month; 
+    int year;
+    int weekday;
+} Date;
+
+// Названия месяцев
+const char* month_names[] = {
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+};
+
+// Названия дней недели
+const char* day_names[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+
+// Получение текущей даты из RTC
+Date get_current_date() {
+    Date date;
+    
+    while (1) {
+        outb(0x70, 0x0A);
+        if (!(inb(0x71) & 0x80)) break;
+    }
+    
+    date.day = bcd_to_bin(rtc_read(0x07));
+    date.month = bcd_to_bin(rtc_read(0x08));
+    date.year = bcd_to_bin(rtc_read(0x09)) + bcd_to_bin(rtc_read(0x32)) * 100;
+    
+    int a = (14 - date.month) / 12;
+    int y = date.year - a;
+    int m = date.month + 12 * a - 2;
+    date.weekday = (date.day + y + y/4 - y/100 + y/400 + (31*m)/12) % 7;
+    
+    return date;
+}
+
+// Проверка високосного года
+int is_leap_year(int year) {
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+// Количество дней в месяце
+int days_in_month(int month, int year) {
+    int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (month == 2 && is_leap_year(year)) return 29;
+    return days[month - 1];
+}
+
+// Получение дня недели для 1 числа месяца
+int get_first_weekday(int month, int year) {
+    int a = (14 - month) / 12;
+    int y = year - a;
+    int m = month + 12 * a - 2;
+    return (1 + y + y/4 - y/100 + y/400 + (31*m)/12) % 7;
+}
+
+// Основная функция календаря
+void calendar_command() {
+    unsigned char old_color = text_color;
+    Date today = get_current_date();
+    int month = today.month;
+    int year = today.year;
+    
+    // Заголовок
+    prints("\n");
+    prints(month_names[month - 1]);
+    prints(" ");
+    char year_str[10];
+    itoa(year, year_str, 10);
+    prints(year_str);
+    prints("\n");
+    
+    // Дни недели
+    for (int i = 0; i < 7; i++) {
+        prints(day_names[i]);
+        prints(" ");
+    }
+    prints("\n");
+    
+    // Вычисляем первый день месяца
+    int first_weekday = get_first_weekday(month, year);
+    int days_in_current_month = days_in_month(month, year);
+    
+    // Корректировка дня недели (Пн=0, Вс=6)
+    first_weekday = (first_weekday + 6) % 7;
+    
+    // Отступ для первого дня
+    for (int i = 0; i < first_weekday; i++) {
+        prints("    "); // 4 пробела на каждый день
+    }
+    
+    // Рисуем дни
+    int day = 1;
+    for (int week = 0; week < 6; week++) {
+        for (int weekday = 0; weekday < 7; weekday++) {
+            if (day <= days_in_current_month) {
+                // Определяем цвет дня
+                if (day == today.day) {
+                    text_color = CAL_TODAY_COLOR; // Сегодня - зеленый
+                } else if (weekday >= 5) { // Суббота и воскресенье
+                    text_color = CAL_WEEKEND_COLOR; // Выходные - красный
+                } else {
+                    text_color = CAL_DAY_COLOR; // Будни - обычный
+                }
+                
+                // Рисуем день с выравниванием
+                if (day < 10) {
+                    prints(" ");
+                }
+                
+                char day_str[3];
+                itoa(day, day_str, 10);
+                prints(day_str);
+                prints("  ");
+                
+                day++;
+            }
+            
+            // Переход на новую неделю
+            if (weekday == 6 && day <= days_in_current_month) {
+                newline();
+            }
+        }
+        
+        if (day > days_in_current_month) break;
+    }
+    
+    // Информация о сегодняшней дате
+    newline();
+    newline();
+    text_color = CAL_DAY_COLOR;
+    prints("Today: ");
+    
+    char today_str[50];
+    strcpy(today_str, day_names[today.weekday]);
+    strcat(today_str, ", ");
+    
+    char day_str[3], month_str[3], year_str_full[6];
+    itoa(today.day, day_str, 10);
+    itoa(today.month, month_str, 10);
+    itoa(today.year, year_str_full, 10);
+    
+    strcat(today_str, day_str);
+    strcat(today_str, ".");
+    strcat(today_str, month_str);
+    strcat(today_str, ".");
+    strcat(today_str, year_str_full);
+    
+    prints(today_str);
+    newline();
+    
+    // Восстанавливаем цвет и завершаем
+    text_color = old_color;
+    prints("> ");
+}
+
 /* Writer text editor */
 void writer_command(const char* filename) {
     FSNode* file = fs_find_file(filename);
@@ -3917,7 +4244,7 @@ void show_help() {
         "cpu",      "date",     "watch",    "biosver",  "calc",
         "time",     "size",     "osver",    "history",  "format",
         "fsck",     "cat",      "explorer", "osinfo",   "autorun",
-		"exit",     "pwd",      "find", NULL
+	"exit",     "pwd",      "find",     "matrix",    "cal", NULL
 		
     };
     
@@ -4012,19 +4339,21 @@ void run_command(char* line) {
     else if(strcasecmp(line, "reboot") == 0) reboot_system();
     else if(strcasecmp(line, "shutdown") == 0) shutdown_system();
 	else if(strcasecmp(line, "watch") == 0) watch_command();
-    else if(strcasecmp(line, "clear") == 0) clear_screen();
+        else if(strcasecmp(line, "clear") == 0) clear_screen();
 	else if(strcasecmp(line, "memory") == 0) memory_command();
 	else if(strcasecmp(line, "install") == 0) install_disk();
 	else if(strcasecmp(line, "osinfo") == 0) osinfo_command();
 	else if(strcasecmp(line, "desktop") == 0) cmd_desktop();
-    else if(strcasecmp(line, "ls") == 0) fs_ls();
+        else if(strcasecmp(line, "ls") == 0) fs_ls();
+        else if(strcasecmp(line, "cal") == 0) calendar_command();
 	else if(strcasecmp(line, "format") == 0) fs_format();
 	else if(strcasecmp(line, "fsck") == 0) fsck_command();
-    else if(strcasecmp(line, "cd") == 0) { while(*p == ' ') p++; if(*p) fs_cd(p); else prints("Usage: cd <directory>\n"); }
-    else if(strcasecmp(line, "mkdir") == 0) { while(*p == ' ') p++; if(*p) fs_mkdir(p); else prints("Usage: mkdir <name>\n"); }
-    else if(strcasecmp(line, "touch") == 0) { while(*p == ' ') p++; if(*p) fs_touch(p); else prints("Usage: touch <name>\n"); }
-    else if(strcasecmp(line, "rm") == 0) { while(*p == ' ') p++; if(*p) fs_rm(p); else prints("Usage: rm <name>\n"); }
+        else if(strcasecmp(line, "cd") == 0) { while(*p == ' ') p++; if(*p) fs_cd(p); else prints("Usage: cd <directory>\n"); }
+        else if(strcasecmp(line, "mkdir") == 0) { while(*p == ' ') p++; if(*p) fs_mkdir(p); else prints("Usage: mkdir <name>\n"); }
+        else if(strcasecmp(line, "touch") == 0) { while(*p == ' ') p++; if(*p) fs_touch(p); else prints("Usage: touch <name>\n"); }
+        else if(strcasecmp(line, "rm") == 0) { while(*p == ' ') p++; if(*p) fs_rm(p); else prints("Usage: rm <name>\n"); }
 	else if(strcasecmp(line, "explorer") == 0) wexplorer_command();
+	else if(strcasecmp(line, "matrix") == 0) matrix_game();
 	else if(strcasecmp(line, "exit") == 0) exit_command();
 	else if(strcasecmp(line, "pwd") == 0) {
     prints(current_dir);
