@@ -137,6 +137,7 @@ void exit_command(void);
 void restore_background(int x, int y);
 void trim_whitespace(char* str);
 void matrix_game(void);
+void sphere_rand(void);
 int rand(void);
 
 /* Command history */
@@ -2149,7 +2150,7 @@ void kill_command(const char* arg) {
         delay(999999); 
         reboot_system();
     } else if (strcmp(arg, "shell") == 0) {
-        text_color = 0x4F;
+        text_color = 0x01;
         clear_screen();
         prints("0xER00DI\n");
         prints("Error: SYSTEM_PROCESS_DIED\n");
@@ -2179,6 +2180,295 @@ void kill_command(const char* arg) {
             newline();
         }
     }
+}
+
+/* ===== MATH GAME WITH AGE LEVELS (VGA compatible) ===== */
+#define MATH_MAX_QUESTIONS 10
+
+typedef struct {
+    int num1;
+    int num2;
+    char operator;
+    int correct_answer;
+    int user_answer;
+} MathQuestion;
+
+typedef struct {
+    int min_age;
+    int max_age;
+    const char* description;
+    int max_number;
+    int include_negative;
+    int operators; // битовая маска: 1=+, 2=-, 4=*, 8=/
+} AgeLevel;
+
+AgeLevel age_levels[] = {
+    {1, 10, "Easy: + and - up to 20", 20, 0, 1 | 2},
+    {11, 15, "Medium: + - * / up to 100", 100, 1, 1 | 2 | 4 | 8},
+    {16, 20, "Hard: All operations", 100, 1, 1 | 2 | 4 | 8},
+    {21, 60, "Expert: Large numbers", 1000, 1, 1 | 2 | 4 | 8},
+    {61, 120, "Senior: Moderate level", 100, 0, 1 | 2 | 4}
+};
+
+#define AGE_LEVELS_COUNT (sizeof(age_levels) / sizeof(age_levels[0]))
+
+int math_score = 0;
+MathQuestion math_questions[MATH_MAX_QUESTIONS];
+
+// Функция для выбора уровня по возрасту
+AgeLevel* select_age_level(int age) {
+    for (int i = 0; i < AGE_LEVELS_COUNT; i++) {
+        if (age >= age_levels[i].min_age && age <= age_levels[i].max_age) {
+            return &age_levels[i];
+        }
+    }
+    return &age_levels[0];
+}
+
+// Генерация случайного числа
+int random_range(int min, int max) {
+    return min + (rand() % (max - min + 1));
+}
+
+// Генерация вопроса
+void generate_math_question(MathQuestion* question, AgeLevel* level) {
+    question->num1 = random_range(1, level->max_number);
+    
+    // Выбор оператора
+    int available_ops = level->operators;
+    int op_count = 0;
+    for (int i = 0; i < 4; i++) {
+        if (available_ops & (1 << i)) op_count++;
+    }
+    
+    int op_index = rand() % op_count;
+    char ops[] = {'+', '-', '*', '/'};
+    
+    // Находим действительный оператор
+    char selected_op = '+';
+    int current_index = 0;
+    for (int i = 0; i < 4; i++) {
+        if (available_ops & (1 << i)) {
+            if (current_index == op_index) {
+                selected_op = ops[i];
+                break;
+            }
+            current_index++;
+        }
+    }
+    
+    question->operator = selected_op;
+    
+    switch (selected_op) {
+        case '+':
+            question->num2 = random_range(1, level->max_number - question->num1);
+            question->correct_answer = question->num1 + question->num2;
+            break;
+            
+        case '-':
+            if (level->include_negative) {
+                question->num2 = random_range(1, level->max_number);
+                question->correct_answer = question->num1 - question->num2;
+            } else {
+                question->num2 = random_range(1, question->num1);
+                question->correct_answer = question->num1 - question->num2;
+            }
+            break;
+            
+        case '*':
+            if (level->max_number <= 20) {
+                question->num1 = random_range(1, 10);
+                question->num2 = random_range(1, 10);
+            } else {
+                question->num2 = random_range(1, level->max_number / 10);
+            }
+            question->correct_answer = question->num1 * question->num2;
+            break;
+            
+        case '/':
+            question->correct_answer = random_range(1, level->max_number <= 20 ? 10 : 20);
+            question->num2 = random_range(1, level->max_number <= 20 ? 10 : 20);
+            question->num1 = question->correct_answer * question->num2;
+            break;
+    }
+}
+
+void math_game(void) {
+    unsigned char old_color = text_color;
+    int exit_game = 0;
+    int age = 0;
+    
+    // Ввод возраста
+    clear_screen();
+    text_color = 0x0F;
+    prints("MATH TRAINER");
+    newline();
+    newline();
+    prints("Enter your age: ");
+    
+    char age_str[4] = {0};
+    int age_len = 0;
+    
+    while (1) {
+        char c = keyboard_getchar();
+        if (c == '\n') {
+            if (age_len > 0) {
+                age = atoi(age_str);
+                if (age >= 1 && age <= 120) break;
+            }
+            prints("Invalid age. Enter 1-120: ");
+            age_len = 0;
+        } else if (c == '\b') {
+            if (age_len > 0) {
+                age_len--;
+                age_str[age_len] = '\0';
+            }
+        } else if (c >= '0' && c <= '9' && age_len < 3) {
+            age_str[age_len] = c;
+            age_len++;
+            age_str[age_len] = '\0';
+            putchar(c);
+        }
+    }
+    
+    // Выбор уровня
+    AgeLevel* level = select_age_level(age);
+    
+    clear_screen();
+    prints("MATH TRAINER");
+    newline();
+    prints("Age: ");
+    char age_display[4];
+    itoa(age, age_display, 10);
+    prints(age_display);
+    prints(" Level: ");
+    prints(level->description);
+    newline();
+    newline();
+    
+    // Генерация вопросов
+    for (int i = 0; i < MATH_MAX_QUESTIONS; i++) {
+        generate_math_question(&math_questions[i], level);
+    }
+    
+    // Игровой цикл
+    math_score = 0;
+    
+    for (int i = 0; i < MATH_MAX_QUESTIONS && !exit_game; i++) {
+        MathQuestion* q = &math_questions[i];
+        
+        // Отображение вопроса
+        prints("Question ");
+        char num_str[4];
+        itoa(i + 1, num_str, 10);
+        prints(num_str);
+        prints(": ");
+        
+        itoa(q->num1, num_str, 10);
+        prints(num_str);
+        prints(" ");
+        putchar(q->operator);
+        prints(" ");
+        itoa(q->num2, num_str, 10);
+        prints(num_str);
+        prints(" = ");
+        
+        // Ввод ответа
+        char answer_str[10] = {0};
+        int answer_len = 0;
+        int answer = 0;
+        
+        while (1) {
+            char c = keyboard_getchar();
+            if (c == '\n') {
+                if (answer_len > 0) {
+                    answer = atoi(answer_str);
+                    break;
+                }
+            } else if (c == '\b') {
+                if (answer_len > 0) {
+                    answer_len--;
+                    answer_str[answer_len] = '\0';
+                }
+            } else if ((c >= '0' && c <= '9') || (c == '-' && answer_len == 0 && level->include_negative)) {
+                if (answer_len < 9) {
+                    answer_str[answer_len] = c;
+                    answer_len++;
+                    answer_str[answer_len] = '\0';
+                    putchar(c);
+                }
+            } else if (c == 0x01) { // ESC
+                exit_game = 1;
+                break;
+            }
+        }
+        
+        if (exit_game) break;
+        
+        q->user_answer = answer;
+        
+        // Проверка ответа
+        if (answer == q->correct_answer) {
+            text_color = 0x0A; // Зеленый
+            prints(" CORRECT");
+            math_score++;
+        } else {
+            text_color = 0x0C; // Красный
+            prints(" WRONG. Correct: ");
+            itoa(q->correct_answer, num_str, 10);
+            prints(num_str);
+        }
+        
+        text_color = 0x0F; // Белый
+        newline();
+        newline();
+    }
+    
+    // Результаты
+    clear_screen();
+    prints("MATH TRAINER RESULTS");
+    newline();
+    newline();
+    prints("Age: ");
+    itoa(age, age_str, 10);
+    prints(age_str);
+    prints(" Level: ");
+    prints(level->description);
+    newline();
+    newline();
+    
+    prints("Score: ");
+    char score_str[4];
+    itoa(math_score, score_str, 10);
+    prints(score_str);
+    prints("/");
+    itoa(MATH_MAX_QUESTIONS, score_str, 10);
+    prints(score_str);
+    prints(" (");
+    int percentage = (math_score * 100) / MATH_MAX_QUESTIONS;
+    itoa(percentage, score_str, 10);
+    prints(score_str);
+    prints("%)");
+    newline();
+    newline();
+    
+    // Оценка
+    if (percentage >= 90) {
+        prints("EXCELLENT!");
+    } else if (percentage >= 70) {
+        prints("GOOD JOB!");
+    } else if (percentage >= 50) {
+        prints("NOT BAD!");
+    } else {
+        prints("KEEP PRACTICING!");
+    }
+    
+    newline();
+    prints("Press any key to continue...");
+    keyboard_getchar();
+    
+    text_color = old_color;
+    clear_screen();
 }
 
 void cmd_desktop() {
@@ -2728,6 +3018,142 @@ void date_command() {
 void biosver_command() {
     prints("BIOS Version: WexOS Virtual BIOS v1.0\n");
     prints("SMBIOS: 2.8\n");
+}
+
+
+/* Скринсейвер 1 - Плавающие разноцветные шары */
+void sphere_rand(void) {
+    unsigned char old_color = text_color;
+    int exit_saver = 0;
+    
+    // Очищаем экран чёрным цветом
+    clear_screen();
+    for(int r = 0; r < ROWS; r++) {
+        for(int c = 0; c < COLS; c++) {
+            VGA[r * COLS + c] = (unsigned short)(' ' | (BLACK << 8));
+        }
+    }
+    
+    // Параметры шаров
+    typedef struct {
+        int x, y;           // позиция
+        int dx, dy;         // направление движения
+        int color;          // цвет шара
+        char symbol;        // символ шара
+        int trail_len;      // длина хвоста
+    } Ball;
+    
+    Ball balls[8]; // 8 шаров
+    
+    // Инициализация шаров
+    for(int i = 0; i < 8; i++) {
+        balls[i].x = 5 + (rand() % (COLS - 10));
+        balls[i].y = 3 + (rand() % (ROWS - 6));
+        balls[i].dx = (rand() % 3) + 1;
+        balls[i].dy = (rand() % 3) + 1;
+        if (rand() % 2) balls[i].dx = -balls[i].dx;
+        if (rand() % 2) balls[i].dy = -balls[i].dy;
+        
+        // Разные цвета для шаров
+        balls[i].color = 0x40 + (i * 2); // Красный, фиолетовый, etc.
+        balls[i].symbol = "Ood0@*#+"[i % 8]; // Разные символы
+        balls[i].trail_len = 3 + (rand() % 4);
+    }
+    
+    int frame = 0;
+    
+    while(!exit_saver) {
+        frame++;
+        
+        // Двигаем и рисуем шары
+        for(int i = 0; i < 8; i++) {
+            // Стираем хвост
+            for(int t = 0; t < balls[i].trail_len; t++) {
+                int trail_x = balls[i].x - (balls[i].dx * t);
+                int trail_y = balls[i].y - (balls[i].dy * t);
+                
+                if (trail_x >= 0 && trail_x < COLS && trail_y >= 0 && trail_y < ROWS) {
+                    cursor_row = trail_y;
+                    cursor_col = trail_x;
+                    text_color = BLACK;
+                    putchar(' ');
+                }
+            }
+            
+            // Обновляем позицию
+            balls[i].x += balls[i].dx;
+            balls[i].y += balls[i].dy;
+            
+            // Отскок от границ с изменением направления
+            if(balls[i].x <= 0) {
+                balls[i].x = 1;
+                balls[i].dx = (rand() % 2) + 1;
+            }
+            if(balls[i].x >= COLS-1) {
+                balls[i].x = COLS-2;
+                balls[i].dx = -((rand() % 2) + 1);
+            }
+            if(balls[i].y <= 0) {
+                balls[i].y = 1;
+                balls[i].dy = (rand() % 2) + 1;
+            }
+            if(balls[i].y >= ROWS-1) {
+                balls[i].y = ROWS-2;
+                balls[i].dy = -((rand() % 2) + 1);
+            }
+            
+            // Рисуем шар с хвостом
+            for(int t = balls[i].trail_len-1; t >= 0; t--) {
+                int trail_x = balls[i].x - (balls[i].dx * t);
+                int trail_y = balls[i].y - (balls[i].dy * t);
+                
+                if (trail_x >= 0 && trail_x < COLS && trail_y >= 0 && trail_y < ROWS) {
+                    cursor_row = trail_y;
+                    cursor_col = trail_x;
+                    
+                    // Градиент хвоста - чем дальше, тем темнее
+                    int trail_color = balls[i].color - (t * 0x10);
+                    if (trail_color < 0x40) trail_color = 0x40;
+                    
+                    text_color = trail_color;
+                    putchar(balls[i].symbol);
+                }
+            }
+            
+            // Рисуем основной шар 
+            cursor_row = balls[i].y;
+            cursor_col = balls[i].x;
+            text_color = balls[i].color;
+            putchar(balls[i].symbol);
+        }
+        
+        // Иногда меняем направление шаров для хаотичности
+        if (frame % 50 == 0) {
+            for(int i = 0; i < 8; i++) {
+                if (rand() % 5 == 0) { // 20% шанс
+                    balls[i].dx = (rand() % 3) + 1;
+                    balls[i].dy = (rand() % 3) + 1;
+                    if (rand() % 2) balls[i].dx = -balls[i].dx;
+                    if (rand() % 2) balls[i].dy = -balls[i].dy;
+                }
+            }
+        }
+        
+        // Проверка нажатия любой клавиши для выхода
+        if (inb(0x64) & 1) {
+            unsigned char sc = inb(0x60);
+            if ((sc & 0x80) == 0) { // Любая нажатая клавиша
+                exit_saver = 1;
+            }
+        }
+        
+        // Задержка для плавности
+        for(volatile int i = 0; i < 30000; i++);
+    }
+    
+    // Восстанавливаем оригинальный цвет и очищаем экран
+    text_color = old_color;
+    clear_screen();
 }
 
 /* Calculator command */
@@ -4234,7 +4660,7 @@ int strcasecmp(const char* a, const char* b) {
 /* Command help */
 void show_help() {
     unsigned char old_color = text_color;
-    text_color = 0x0A;
+    text_color = 0x0A; // Зеленый для заголовка
     
     const char* commands[] = {
         "help",     "echo",     "reboot",   "shutdown", "clear",
@@ -4244,42 +4670,53 @@ void show_help() {
         "cpu",      "date",     "watch",    "biosver",  "calc",
         "time",     "size",     "osver",    "history",  "format",
         "fsck",     "cat",      "explorer", "osinfo",   "autorun",
-	"exit",     "pwd",      "find",     "matrix",    "cal", NULL
-		
+        "exit",     "pwd",      "find",     "matrix",   "mathgame",
+        "cal",      "rand", NULL
     };
     
-    prints("Available commands:\n");
-    prints("==================\n\n");
+    prints("Available commands:");
+    newline();
+    prints("===================");
+    newline();
+    newline();
     
+    text_color = 0x0A; // зеленый для command =) ^^
+    
+    // Подсчет общего количества команд
     int total_commands = 0;
     while (commands[total_commands] != NULL) {
         total_commands++;
     }
     
-    int commands_per_column = (total_commands + 1) / 2;
-    int col_width = 15;
+    // Расчет количества строк (по 4 команды в строке)
+    int rows = (total_commands + 3) / 4; // Округление вверх
+    int col_width = 18; // Ширина колонки
     
-    for (int i = 0; i < commands_per_column; i++) {
-        // Левый столбец
-        cursor_col = 2;
-        prints(commands[i]);
-        
-        // Выравнивание левого столбца
-        int spaces = col_width - strlen(commands[i]);
-        for (int s = 0; s < spaces; s++) {
-            putchar(' ');
+    // Вывод команд в 4 колонки
+    for (int row = 0; row < rows; row++) {
+        for (int col = 0; col < 4; col++) {
+            int index = row + col * rows;
+            if (index < total_commands) {
+                // Вывод команды
+                prints(commands[index]);
+                
+                // Выравнивание пробелами
+                int spaces = col_width - strlen(commands[index]);
+                for (int s = 0; s < spaces; s++) {
+                    putchar(' ');
+                }
+            }
         }
-        
-        // Правый столбец (если есть)
-        if (i + commands_per_column < total_commands) {
-            prints(commands[i + commands_per_column]);
-        }
-        
         newline();
     }
     
     newline();
-    prints("These are all commands.\n");
+    text_color = 0x0E; // Желтый для итога
+    prints("Total commands: ");
+    char total_str[4];
+    itoa(total_commands, total_str, 10);
+    prints(total_str);
+    newline();
     
     text_color = old_color;
 }
@@ -4354,6 +4791,9 @@ void run_command(char* line) {
         else if(strcasecmp(line, "rm") == 0) { while(*p == ' ') p++; if(*p) fs_rm(p); else prints("Usage: rm <name>\n"); }
 	else if(strcasecmp(line, "explorer") == 0) wexplorer_command();
 	else if(strcasecmp(line, "matrix") == 0) matrix_game();
+	else if(strcasecmp(line, "mathgame") == 0) math_game();
+	else if(strcasecmp(line, "rand") == 0) sphere_rand();
+
 	else if(strcasecmp(line, "exit") == 0) exit_command();
 	else if(strcasecmp(line, "pwd") == 0) {
     prints(current_dir);
@@ -4613,30 +5053,28 @@ void draw_loading_animation(int frame, int progress) {
     text_color = LOADING_TEXT_COLOR;
     prints("Initializing system components");
 }
-/* Kernel main */
-void _start() {
-    text_color = 0x07;
 
-    // --- Показываем экран загрузки ---
+/*Functions main*/
+void all_functions(void) {
+    //тут все функций которые должны вызываться в main но я вынес их для удобства, кому я вру мне было скучно и я что то сделал чтобы не забивать _start. я ничего лучше не придумал потому что и скучно и лень а если ты не разбираешься в моем коде то я тоже но я должен написать на след строке...
+    /*functions called by _start*/
     show_loading_screen();
-    
-    // Очищаем экран после загрузки
     clear_screen();
-
-    // Инициализация процессов
-    init_processes();
-    
-    // Инициализация файловой системы
     fs_init();
-
-    // --- Проверка пароля при загрузке ---
+    init_processes();
     if (!check_login()) {
         prints("Login failed. System halted.\n");
         while(1) { __asm__ volatile("hlt"); }
     }
-
-    // --- ЗАПУСК АВТОЗАПУСКА ПОСЛЕ ВХОДА ---
     autorun_execute();
+}
+
+/* Kernel main */
+void _start() {
+    text_color = 0x07;
+
+     //Вызов функций которая вызывает другие функций а эти функций другие функций. WTF 0_0
+     all_functions();
 
     prints("WexOS Shell v1.0\n");
     prints("Type 'help' for commands\n\n");
